@@ -18,6 +18,7 @@ from loci.io import Data, Format, ReadResult, is_remote, read
 from loci.models import CrsSource, Kind, ReadOptions
 
 ROOT_ENV = "LOCI_WORKSPACE"
+PROJECT_ENV = "CLAUDE_PROJECT_DIR"  # set by Claude Code for MCP servers and hooks
 DEFAULT_ROOT = ".loci"
 REF_PATTERN = re.compile(r"(raster|vector)-[0-9a-f]{8}")
 
@@ -63,7 +64,12 @@ class Workspace:
 
     @classmethod
     def from_env(cls) -> "Workspace":
-        return cls(os.environ.get(ROOT_ENV, DEFAULT_ROOT))
+        """$LOCI_WORKSPACE; else .loci/ in the Claude Code project, so the MCP server and hooks
+        share one workspace; else ./.loci."""
+        if root := os.environ.get(ROOT_ENV):
+            return cls(root)
+        project = os.environ.get(PROJECT_ENV)
+        return cls(Path(project) / DEFAULT_ROOT if project else DEFAULT_ROOT)
 
     @property
     def stac_dir(self) -> Path:

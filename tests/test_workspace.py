@@ -112,3 +112,12 @@ def test_from_env_uses_the_configured_root(monkeypatch: pytest.MonkeyPatch, tmp_
 
     assert ws.root == (tmp_path / "elsewhere").resolve()
     assert ws.refs_dir.is_dir()
+
+
+def test_from_env_falls_back_to_the_claude_code_project(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("LOCI_WORKSPACE", raising=False)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    assert Workspace.from_env().root == (tmp_path / ".loci").resolve()
