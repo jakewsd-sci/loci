@@ -62,6 +62,24 @@ for step in lineage(ws, ndvi.data_ref).steps:  # run <- load <- stac_search <- E
     print(step.produced_by, step.description)
 ```
 
+## Use from Claude Code
+
+Open Claude Code in this folder and trust the folder when asked. The project's `.mcp.json` starts
+the `loci` MCP server with `uv run loci-mcp`, and its tools appear as `mcp__loci__load`,
+`mcp__loci__validate` and so on. Then ask a question, for example:
+
+> How green was the land around Sydney Harbour (bbox 151.15,-33.90,151.30,-33.80) in June 2024?
+> Give the median NDVI and say how far the answer can be trusted.
+
+Every data_ref that `load`, `stac_search` or `run` makes is validated automatically by a hook in
+`.claude/settings.json`, and the result is shown to Claude next to the tool's output. To make a
+failed validation stop Claude until it is dealt with, or to turn the hook off, set
+`LOCI_VALIDATION_HOOK` to `block` or `off` in `.claude/settings.local.json`:
+
+```json
+{ "env": { "LOCI_VALIDATION_HOOK": "block" } }
+```
+
 ## Documentation
 
 - [`CLAUDE.md`](CLAUDE.md): project guide, commands, rules and milestones.

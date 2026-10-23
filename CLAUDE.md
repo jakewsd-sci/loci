@@ -18,6 +18,7 @@ answer, or make a decision?**
 uv sync                    # create .venv and install the package plus the dev group
 uv run pytest              # tests (network tests deselected)
 uv run pytest -m network   # only tests that need internet access (Sentinel-2 over Sydney)
+uv run pytest -m claude    # real Claude Code sessions (needs the claude CLI; costs model usage)
 uv run ruff check          # lint
 uv run ruff format         # format (CI runs `ruff format --check`)
 uv run mypy                # type-check src/ and tests/
@@ -25,6 +26,14 @@ uv run mypy                # type-check src/ and tests/
 
 Run lint, format, mypy and pytest before every commit. CI runs the same checks on Python 3.12
 and 3.13.
+
+## Using loci from Claude Code
+
+`.mcp.json` starts the MCP server (`uv run loci-mcp`), and `.claude/settings.json` adds a
+PostToolUse hook (`loci-hook`) that validates every data_ref made by `load`, `stac_search` or
+`run`. `LOCI_VALIDATION_HOOK` in the same file picks `report` (default), `block` or `off`; put a
+personal choice in `.claude/settings.local.json`. The workspace is `.loci/` in the project, or
+`$LOCI_WORKSPACE`.
 
 ## Layout
 
@@ -40,9 +49,12 @@ src/loci/        the package
   render.py      PNG drawing behind `preview`                                            [M3]
   provenance.py  provenance records: ledger under .loci/provenance/ plus file sidecars   [M4]
   script.py      helpers for scripts started by `run` (read, physical, save)             [M4]
-  server.py      thin MCP wrapper over tools/                                            [M5]
+  server.py      thin MCP wrapper over tools/ (`loci-mcp`)                               [M5]
+  hooks.py       Claude Code hook that validates new data_refs (`loci-hook`)             [M5]
 tests/           pytest suite; fixtures are generated in code by loci.synthetic
 benchmarks/      five benchmark workflows and run.py                                     [M6]
+.mcp.json        starts the MCP server for Claude Code                                   [M5]
+.claude/         settings.json: the validation hook and its mode                         [M5]
 docs/DECISIONS.md  decision log
 ```
 
@@ -90,5 +102,5 @@ questions, then stop. When something is ambiguous, ask rather than guess.
 - [x] M2: `validate` with geospatial invariants, each tested on passing and failing fixtures
 - [x] M3: `stac_search` and `preview`
 - [x] M4: `run`, provenance sidecars, `lineage`
-- [ ] M5: MCP server, `.mcp.json`, hooks that run validation automatically, end-to-end check
+- [x] M5: MCP server, `.mcp.json`, hooks that run validation automatically, end-to-end check
 - [ ] M6: five benchmark tasks and `benchmarks/run.py`

@@ -618,3 +618,100 @@ what a script computes.
 
 **Alternatives.** Keeping it explicit (D-035): faithful to storage, but easy to forget. Converting
 every band: simpler to state, but it breaks class maps and bit flags.
+
+## D-037 The MCP server adapts loci.tools without restating them (M5, 2026-10-23)
+
+**Context.** The tool functions and `models.py` are the stable interface. The MCP server must
+expose them to Claude Code without becoming a second copy that drifts.
+
+**Choice.** `server.py` builds the MCP tools from the functions in `loci.tools`. Each one is the
+same function with the Workspace filled in, so its arguments, docstring and result schema are
+exactly those of the Python tool. A test checks that every tool's MCP arguments match its Python
+signature.
+- Results go out as structured content plus compact JSON text with empty fields left out.
+- `preview` also returns its PNG, so the agent can look at the picture (a few hundred tokens).
+- A `LociError` becomes a tool error with its hint. Any other exception comes back as its type and
+  message, instead of the SDK's bare "Error executing tool".
+- Calls run one at a time, because the SDK runs sync tools in threads and the workspace cache is
+  shared.
+- The server's instructions give the agent the working rules: keep data in data_refs, pass
+  assumptions on, validate before concluding, and read inputs only through `loci.script`.
+- `.mcp.json` starts it with `uv run --quiet loci-mcp`. Without `LOCI_WORKSPACE`, the workspace is
+  `.loci/` in `$CLAUDE_PROJECT_DIR`, which Claude Code sets for MCP servers and hooks, so both
+  share one workspace whatever their working directory.
+- `.claude/settings.json` lists `loci` in `enabledMcpjsonServers`. Claude Code ignores that in a
+  folder the user has not trusted, so the trust prompt still protects new clones.
+
+Built on the MCP Python SDK 2.3, where `FastMCP` is now `MCPServer`.
+
+**Alternatives.** Hand-written wrappers per tool: easy to read, but every signature written twice.
+Returning only text: simpler, but it loses the output schema a future UI can use.
+
+## D-038 Automatic validation as a PostToolUse hook with report, block and off (M5, 2026-10-23)
+
+**Context.** The brief asks for hooks that run validation automatically, so that checking does not
+depend on the agent remembering. The user asked for it to be switchable.
+
+**Choice.** `.claude/settings.json` runs `loci-hook` after `mcp__loci__load`, `stac_search` and
+`run`. The hook finds the data_refs the tool made and validates each one. Run outputs are not
+validated twice: `run` has already validated them, and the hook reuses that report.
+`LOCI_VALIDATION_HOOK` sets the mode, through the `env` block in the same settings file:
+- `report` (default): the result goes next to the tool's output as `additionalContext`, and Claude
+  carries on.
+- `block`: a failure goes back as `decision: "block"` with a reason. Claude is asked to fix the
+  input or the call, or to tell the user why the result is still usable.
+- `off`: nothing runs.
+
+A failure is also shown to the user as a `systemMessage`. Personal overrides go in
+`.claude/settings.local.json`, which git ignores.
+
+Facts checked against the current hooks documentation and a real session:
+- Claude Code passes an MCP result to the hook as its JSON text.
+- The `env` from settings reaches hook commands.
+- A PostToolUse "block" cannot undo the call. It only puts the reason in front of Claude.
+
+The hook never breaks a session: if it fails, it says so in a `systemMessage`. It has a timeout of
+300 s, because validating a STAC stack reads pixels.
+
+**Alternatives.**
+- Validating inside each tool: simpler, but it couldn't be switched per user, and the brief asks
+  for hooks.
+- A PreToolUse hook that refuses later calls on failed data_refs: stricter, but it needs a way to
+  override deliberate use, such as computing a mean that needs no CRS.
+
+## D-039 One harmless rasterio warning silenced at runtime (M5, 2026-10-23)
+
+**Context.** In the first end-to-end session, odc-loader's overview reads printed rasterio's "no
+geotransform" warning into the stderr of scripts and the hook. The agent reported it as something
+it had not investigated. The tests already filter it (D-029), and the values are correct.
+
+**Choice.** `loci.io.stac` ignores exactly that message, and only when rasterio's warp module
+issues it. A file that really has no geotransform still warns when it is opened, and loci's
+`crs_defined` check reports it anyway. A test checks both sides of the filter.
+
+**Alternatives.** Leaving it in: honest, but noise that costs the agent's and the user's
+attention. Filtering through `PYTHONWARNINGS` in `run`: it covers scripts but not the hook.
+
+## D-040 End to end in real Claude Code sessions (M5, 2026-10-23)
+
+**Context.** Unit tests cover the server through an MCP client, over stdio too. They cannot show
+that Claude Code starts the server from `.mcp.json`, that the hook's output reaches Claude, or how
+an agent actually uses the tools.
+
+**Choice.** `uv run pytest -m claude` runs short `claude -p` sessions in the project, with only
+the loci tools allowed. It loads a raster with no CRS in report and block modes, and asserts on
+the hook's output in the event stream rather than on the model's wording. These tests cost model
+usage, so they are deselected by default and do not run in CI.
+
+A real question over Sydney ("how green was the land in June 2024?") was also run by hand twice.
+- Claude searched, then loaded red, NIR and SCL with an explicit resolution: 20 m in one run,
+  10 m in the other.
+- It noticed the offset warning, checked the values (with `inspect` in one run, `validate` in
+  the other), and reloaded with `drop_offset=True`.
+- It masked clouds with SCL in a `run` script, and reported a land median NDVI of 0.46. Both runs
+  agreed, and the answer came with caveats on cloud, coverage and resolution.
+- The first session also found a bug: an integer count band inherited a NaN nodata and
+  `script.save` crashed. Such a band is now written without nodata, with a warning.
+
+**Alternatives.** Scripting the MCP calls without a model: deterministic, but it does not test
+what matters, which is how an agent uses the tools and the hook in Claude Code.
