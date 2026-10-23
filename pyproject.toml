@@ -7,11 +7,14 @@ requires-python = ">=3.12"
 dependencies = [
     "dask[array]>=2026.8.0",
     "geopandas>=1.2.0",
+    "matplotlib>=3.11.2",
     "numpy>=2.5.4",
+    "odc-stac>=0.5.3",
     "pandas>=3.1.0",
     "pyarrow>=26.0.0",
     "pydantic>=2.14.1",
     "pyproj>=3.8.0",
+    "pystac-client>=0.9.1",
     "rasterio>=1.5.2",
     "rioxarray>=0.23.0",
     "shapely>=2.2.0",
@@ -59,4 +62,6 @@ filterwarnings = [
     "error",
     # rioxarray uses affine's deprecated `*` operator internally.
     "ignore:Use `@` matmul instead of `\\*` mul operator:PendingDeprecationWarning",
+    # odc-geo uses shapely's deprecated ops.transform internally.
+    "ignore:The 'shapely.ops.transform\\(\\)' function is deprecated:DeprecationWarning",
 ]

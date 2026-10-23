@@ -24,11 +24,7 @@ def test_register_writes_a_readable_record(ws: Workspace, ramp_tif: Path) -> Non
 
     assert REF_PATTERN.fullmatch(ref)
     assert ref.startswith("raster-")
-    assert on_disk["source"] == {
-        "uri": str(ramp_tif),
-        "format": "geotiff",
-        "options": {"layer": None, "x_col": None, "y_col": None, "crs": None},
-    }
+    assert on_disk["source"] == {"uri": str(ramp_tif), "format": "geotiff", "options": {}}
     assert on_disk["session_id"] == ws.session_id
     assert on_disk["crs_source"] == "file"
     assert on_disk["fingerprint"]["size"] == ramp_tif.stat().st_size

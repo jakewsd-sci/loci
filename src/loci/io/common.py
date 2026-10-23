@@ -29,6 +29,7 @@ class ReadResult:
     options: ReadOptions
     crs_source: CrsSource | None
     warnings: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 def parse_crs(text: str) -> CRS:

@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,7 +22,7 @@ def ws(tmp_path: Path) -> Workspace:
 def make_layer() -> MakeLayer:
     """Build a check Layer from a file: make_layer(path, name="x", crs=..., x_col=...)."""
 
-    def make(path: Path, name: str = "x", **options: str) -> Layer:
+    def make(path: Path, name: str = "x", **options: Any) -> Layer:
         loaded = read(str(path), detect_format(str(path)), ReadOptions(**options))
         return Layer(name, loaded.data, loaded.crs_source)
 

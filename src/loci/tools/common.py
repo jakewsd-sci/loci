@@ -43,7 +43,7 @@ def describe(
         kind=record.kind,
         summary=summary,
         warnings=[*record.load_warnings, *(warnings or []), *found],
-        notes=[*context, *(notes or [])],
+        notes=[*record.load_notes, *context, *(notes or [])],
     )
 
 

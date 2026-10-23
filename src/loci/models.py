@@ -38,12 +38,21 @@ class _Model(BaseModel):
 
 
 class ReadOptions(_Model):
-    """How a source was read. Stored with each data_ref so any process can reopen it identically."""
+    """How a source was read. Stored with each data_ref so any process can reopen it identically.
+
+    layer, x_col, y_col and crs apply to files; bands, resolution, bbox, output_crs and resampling
+    to pixels loaded from STAC items.
+    """
 
     layer: str | None = None
     x_col: str | None = None
     y_col: str | None = None
     crs: str | None = None
+    bands: list[str] | None = None
+    resolution: float | None = None
+    bbox: Bounds | None = None
+    output_crs: str | None = None
+    resampling: str | None = None
 
 
 class CRSInfo(_Model):
@@ -173,6 +182,67 @@ class RefSummary(_Model):
     data_ref: str
     kind: Kind
     summary: Summary
+    warnings: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class MonthCount(_Model):
+    month: str
+    items: int
+    days: int
+    median_cloud_cover: float | None = None
+
+
+class ItemRow(_Model):
+    id: str
+    datetime: str
+    cloud_cover: float | None = None
+    grid: str | None = None
+
+
+class StacSearchResult(_Model):
+    """What `stac_search` returns: a data_ref for the items plus a compact account of them.
+
+    The items are a vector layer of footprints, so inspect, validate and preview work on the
+    data_ref; load(data_ref, bands=...) loads their pixels.
+    """
+
+    data_ref: str
+    catalog: str
+    collection: str
+    bbox: Bounds
+    start: str
+    end: str
+    max_cloud: float | None
+    items: int
+    matched: int | None
+    first: str | None
+    last: str | None
+    days: int
+    cloud_cover: NumericStats | None
+    crs: dict[str, int]
+    grids: dict[str, int]
+    by_month: list[MonthCount]
+    months_omitted: int = 0
+    sample: list[ItemRow]
+    bands: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class PreviewResult(_Model):
+    """What `preview` returns: the path of a small PNG and what it shows."""
+
+    data_ref: str
+    path: str
+    width: int
+    height: int
+    shows: str
+    bands: list[str] | None = None
+    column: str | None = None
+    time: str | None = None
+    stretch: tuple[float, float] | None = None
+    extent: Extent
     warnings: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 

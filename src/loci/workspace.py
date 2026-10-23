@@ -50,6 +50,7 @@ class RefRecord(BaseModel):
     fingerprint: Fingerprint | None = None
     crs_source: CrsSource | None = None
     load_warnings: list[str] = Field(default_factory=list)
+    load_notes: list[str] = Field(default_factory=list)
 
 
 class Workspace:
@@ -64,10 +65,23 @@ class Workspace:
     def from_env(cls) -> "Workspace":
         return cls(os.environ.get(ROOT_ENV, DEFAULT_ROOT))
 
-    def register(self, result: ReadResult, uri: str) -> RefRecord:
-        """Record a freshly read dataset under a new data_ref and keep it open."""
+    @property
+    def stac_dir(self) -> Path:
+        """Where stac_search keeps the items it found, one FeatureCollection per data_ref."""
+        return self._subdir("stac")
+
+    @property
+    def previews_dir(self) -> Path:
+        return self._subdir("previews")
+
+    def register(self, result: ReadResult, uri: str, *, data_ref: str | None = None) -> RefRecord:
+        """Record a freshly read dataset and keep it open.
+
+        `data_ref` is one reserved earlier with new_ref (for files written under that name);
+        otherwise a new one is drawn.
+        """
         record = RefRecord(
-            data_ref=self._new_ref(result.kind),
+            data_ref=data_ref or self.new_ref(result.kind),
             kind=result.kind,
             source=SourceSpec(uri=uri, format=result.format, options=result.options),
             created_at=datetime.now(UTC),
@@ -75,6 +89,7 @@ class Workspace:
             fingerprint=fingerprint(uri),
             crs_source=result.crs_source,
             load_warnings=result.warnings,
+            load_notes=result.notes,
         )
         self._write(record)
         self._cache[record.data_ref] = result.data
@@ -118,16 +133,23 @@ class Workspace:
             )
         return self.refs_dir / f"{data_ref}.json"
 
-    def _new_ref(self, kind: Kind) -> str:
+    def new_ref(self, kind: Kind) -> str:
+        """A data_ref not yet in use."""
         while True:
             ref = f"{kind}-{secrets.token_hex(4)}"
             if not self._path(ref).exists():
                 return ref
 
+    def _subdir(self, name: str) -> Path:
+        path = self.root / name
+        path.mkdir(exist_ok=True)
+        return path
+
     def _write(self, record: RefRecord) -> None:
         final = self._path(record.data_ref)
         temporary = final.with_name(f".{final.name}.tmp")
-        temporary.write_text(record.model_dump_json(indent=2))
+        # None fields are left out (they read back as None), which keeps records readable.
+        temporary.write_text(record.model_dump_json(indent=2, exclude_none=True))
         os.replace(temporary, final)
 
     def _hint(self, limit: int = 5) -> str:

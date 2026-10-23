@@ -6,17 +6,20 @@ All projected fixtures use WGS 84 / UTM zone 33N with their upper-left corner at
 """
 
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pystac
 import rasterio
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
+from pyproj import Transformer
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
-from shapely.geometry import Polygon, box
+from shapely.geometry import Polygon, box, mapping
 
 UTM33N = "EPSG:32633"
 ORIGIN = (500_000.0, 4_100_000.0)
@@ -68,6 +71,22 @@ NDVI_MIN, NDVI_MAX, NDVI_BAD = -0.2, 0.8, 1.2
 # Grid variants of the ramp: 20 m pixels, and 10 m pixels shifted half a pixel east.
 COARSE_RES = 20.0
 SHIFT_X = 5.0
+
+# STAC scenes: three dates of a 40 x 40 pixel, 10 m scene with red and nir bands (uint16,
+# scale 0.0001, offset -0.1, nodata 0) and a 20 m "scl" band. Red on scene k is 1000 + 100 k.
+STAC_DATES = ("2024-03-04", "2024-03-14", "2024-03-24")
+STAC_CLOUD = (30.0, 5.0, 60.0)
+STAC_CLEAREST = 1
+STAC_SIZE = 40
+STAC_RES = 10.0
+STAC_RED = (1000, 1100, 1200)
+STAC_NIR = 3000
+STAC_SCALE, STAC_OFFSET = 0.0001, -0.1
+STAC_EXTENSIONS = [
+    "https://stac-extensions.github.io/projection/v1.1.0/schema.json",
+    "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
+    "https://stac-extensions.github.io/eo/v1.1.0/schema.json",
+]
 
 # Clean polygons: a 2 x 2 grid of 100 m squares.
 POLY_SIZE = 100.0
@@ -356,3 +375,59 @@ def write_wide_csv(path: Path) -> Path:
         df[f"notes_{k}"] = [f"observation {r} {long_text}" for r in range(len(df))]
     df.to_csv(path, index=False)
     return path
+
+
+def stac_items(directory: Path, *, offsets: Iterable[float] | None = None) -> list[pystac.Item]:
+    """Three synthetic Sentinel-2-like scenes as STAC items whose assets are local GeoTIFFs.
+
+    Items carry the projection, raster and eo extension fields odc-stac reads. `offsets` overrides
+    each item's offset, e.g. to imitate a change of processing baseline between scenes.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    offsets = list(offsets) if offsets is not None else [STAC_OFFSET] * len(STAC_DATES)
+    x0, y0 = ORIGIN
+    extent = STAC_SIZE * STAC_RES
+    to_lonlat = Transformer.from_crs(UTM33N, "EPSG:4326", always_xy=True)
+    west, south, east, north = to_lonlat.transform_bounds(x0, y0 - extent, x0 + extent, y0)
+    items = []
+    for date, cloud, red, offset in zip(STAC_DATES, STAC_CLOUD, STAC_RED, offsets, strict=True):
+        bands = {
+            "red": (np.full((STAC_SIZE, STAC_SIZE), red, dtype="uint16"), STAC_RES),
+            "nir": (np.full((STAC_SIZE, STAC_SIZE), STAC_NIR, dtype="uint16"), STAC_RES),
+            "scl": (np.full((STAC_SIZE // 2, STAC_SIZE // 2), 4, dtype="uint8"), 2 * STAC_RES),
+        }
+        item = pystac.Item(
+            id=f"SYN_{date.replace('-', '')}",
+            geometry=mapping(box(west, south, east, north)),
+            bbox=[west, south, east, north],
+            datetime=datetime.fromisoformat(date).replace(hour=10, tzinfo=UTC),
+            properties={"eo:cloud_cover": cloud, "proj:epsg": 32633, "platform": "synthetic"},
+            stac_extensions=STAC_EXTENSIONS,
+        )
+        for name, (values, res) in bands.items():
+            path = _write_geotiff(
+                directory / f"{item.id}_{name}.tif", values[None], crs=UTM33N, res=res, nodata=0
+            )
+            raster: dict[str, object] = {
+                "nodata": 0,
+                "data_type": values.dtype.name,
+                "spatial_resolution": res,
+            }
+            if name != "scl":
+                raster.update(scale=STAC_SCALE, offset=offset)
+            item.add_asset(
+                name,
+                pystac.Asset(
+                    href=str(path.resolve()),
+                    media_type=pystac.MediaType.COG,
+                    roles=["data"],
+                    extra_fields={
+                        "gsd": res,
+                        "proj:shape": list(values.shape),
+                        "proj:transform": [res, 0.0, x0, 0.0, -res, y0],
+                        "raster:bands": [raster],
+                    },
+                ),
+            )
+        items.append(item)
+    return items
