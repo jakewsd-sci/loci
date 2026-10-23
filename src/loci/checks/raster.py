@@ -69,14 +69,15 @@ def check_valid_fraction(layer: Layer, min_fraction: float) -> CheckResult:
     }
     if low_steps:
         details["low_steps"] = len({t for t, _ in low_steps})
-    approx = "" if source.method == "exact" else f" ({_method(source)})"
+    # How the sample was taken, appended inside each message's parentheses when approximate.
+    via = "" if source.method == "exact" else f", {_method(source)}"
 
     if lowest == 0:
         return result(
             "valid_fraction",
             "fail",
             [layer],
-            f"Band '{worst_band}' has no valid pixels{approx}.",
+            f"Band '{worst_band}' has no valid pixels{f' ({via[2:]})' if via else ''}.",
             details=details,
             hint="Check the nodata value and any masking that produced this band.",
         )
@@ -86,7 +87,7 @@ def check_valid_fraction(layer: Layer, min_fraction: float) -> CheckResult:
             "warn",
             [layer],
             f"Only {lowest:.0%} of pixels in band '{worst_band}' are valid (threshold "
-            f"{min_fraction:.0%}){approx}.",
+            f"{min_fraction:.0%}{via}).",
             details=details,
             hint="Results rest on the valid pixels only. Say how missing pixels are handled, or "
             "choose data with better coverage.",
@@ -99,7 +100,7 @@ def check_valid_fraction(layer: Layer, min_fraction: float) -> CheckResult:
             "warn",
             [layer],
             f"{count} of {steps} time steps have under {min_fraction:.0%} valid pixels (lowest: "
-            f"{iso(t)}, {f:.0%}){approx}.",
+            f"{iso(t)}, {f:.0%}{via}).",
             details=details,
             hint="Composites and trends over these steps rest on few pixels. Say how they are "
             "handled, for example by dropping or down-weighting them.",
@@ -109,7 +110,7 @@ def check_valid_fraction(layer: Layer, min_fraction: float) -> CheckResult:
         "valid_fraction",
         "pass",
         [layer],
-        f"{share} valid in every band (threshold {min_fraction:.0%}){approx}.",
+        f"{share} valid in every band (threshold {min_fraction:.0%}{via}).",
         details=details,
     )
 

@@ -93,7 +93,7 @@ def test_sampled_valid_fraction_says_so(make_layer: MakeLayer, ramp_tif: Path) -
     out = check_valid_fraction(sampled, min_fraction=0.5)
 
     assert out.details["method"] == "from 1 in 3 pixels along x and y"
-    assert out.message.endswith("(from 1 in 3 pixels along x and y).")
+    assert out.message.endswith("(threshold 50%, from 1 in 3 pixels along x and y).")
 
 
 def test_matching_grids_pass(make_layer: MakeLayer, ramp_tif: Path, overview_tif: Path) -> None:
