@@ -20,10 +20,9 @@ DOUBLE = """
 import xarray as xr
 from loci import script
 
-dem = script.read("dem")["band_1"]
+dem = script.read("dem")["band_1"]  # nodata is NaN
 factor = script.parameters().get("factor", 2)
-doubled = xr.where(dem == dem.rio.nodata, dem, dem * factor).rio.write_nodata(dem.rio.nodata)
-script.save(xr.Dataset({"elevation": doubled}), "doubled.tif")
+script.save(xr.Dataset({"elevation": dem * factor}), "doubled.tif")
 print("doubled with factor", factor)
 """
 
@@ -153,11 +152,11 @@ def test_run_arguments_are_checked_before_anything_runs(ws: Workspace) -> None:
     assert not list(ws.runs_dir.iterdir())
 
 
-def _ndvi_code(convert: str) -> str:
+def _ndvi_code(read_options: str) -> str:
     return (
         "from loci import script\n"
-        "stack = script.read('stack')\n"
-        f"red, nir = {convert}(stack['red']), {convert}(stack['nir'])\n"
+        f"stack = script.read('stack'{read_options})\n"
+        "red, nir = stack['red'], stack['nir']\n"
         "script.save(((nir - red) / (nir + red)).median('time').rename('ndvi'), 'ndvi.tif')\n"
     )
 
@@ -170,8 +169,8 @@ def test_ndvi_from_physical_values_is_right_and_raw_ratios_are_flagged(
     )
     stack = load(ws, search.data_ref, bands=["red", "nir"]).data_ref
 
-    physical = run(ws, code=_ndvi_code("script.physical"), inputs={"stack": stack})
-    raw = run(ws, code=_ndvi_code(""), inputs={"stack": stack})
+    physical = run(ws, code=_ndvi_code(""), inputs={"stack": stack})
+    raw = run(ws, code=_ndvi_code(", raw=True"), inputs={"stack": stack})
 
     def ndvi(result_ref: str | None) -> float:
         assert result_ref is not None

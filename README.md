@@ -52,7 +52,7 @@ print(preview(ws, stack.data_ref).path)  # PNG of the least cloudy day
 NDVI = """
 from loci import script
 stack = script.read("stack")
-red, nir = script.physical(stack["red"]), script.physical(stack["nir"])
+red, nir = stack["red"], stack["nir"]  # physical values: scale, offset, NaN nodata
 script.save(((nir - red) / (nir + red)).median("time").rename("ndvi"), "ndvi.tif")
 """
 bands = load(ws, found.data_ref, bands=["red", "nir"], drop_offset=True)  # see D-030

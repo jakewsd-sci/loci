@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pystac
 import pytest
 import rasterio
 import rioxarray  # noqa: F401  (registers the .rio accessor)
@@ -16,6 +17,7 @@ from loci.errors import LociError
 from loci.io import Format, detect_format, read
 from loci.models import ReadOptions
 from loci.tools.load import load
+from loci.tools.stac_search import stac_search
 from loci.workspace import Workspace
 
 
@@ -96,6 +98,49 @@ def test_physical_masks_nodata_applies_scaling_and_drops_packing_attrs() -> None
     assert red.attrs.get("units") == "1"
     assert "scale_factor" not in red.attrs and "add_offset" not in red.attrs
     assert np.isnan(red.rio.nodata)
+
+
+def test_physical_is_idempotent() -> None:
+    once = script.physical(_raw_red())
+
+    np.testing.assert_array_equal(script.physical(once).values, once.values)
+
+
+def _declare(run_dir: Path, **refs: str) -> None:
+    (run_dir / script.INPUTS_FILE).write_text(json.dumps(refs))
+
+
+def test_read_gives_physical_values_for_scaled_bands(
+    run_dir: Path, ws: Workspace, stac_scenes: list[pystac.Item]
+) -> None:
+    search = stac_search(
+        ws, bbox=list(stac_scenes[0].bbox or []), start="2024-03-01", end="2024-03-31"
+    )
+    _declare(run_dir, stack=load(ws, search.data_ref, bands=["red"]).data_ref)
+
+    red = script.read("stack")["red"]
+    stored = script.read("stack", raw=True)["red"]
+
+    assert red.dtype == np.float32 and "scale_factor" not in red.attrs
+    expected = [r * syn.STAC_SCALE + syn.STAC_OFFSET for r in syn.STAC_RED]
+    np.testing.assert_allclose(red.values[:, 0, 0], expected, atol=1e-6)
+    assert stored.dtype == np.uint16 and stored.attrs["scale_factor"] == syn.STAC_SCALE
+
+
+def test_read_masks_float_nodata_but_keeps_unscaled_integers(
+    run_dir: Path, ws: Workspace, ramp_tif: Path, multiband_tif: Path
+) -> None:
+    _declare(
+        run_dir, dem=load(ws, str(ramp_tif)).data_ref, bands=load(ws, str(multiband_tif)).data_ref
+    )
+
+    dem = script.read("dem")["band_1"]
+    bands = script.read("bands")
+
+    assert int(dem.isnull().sum()) == syn.RAMP_NODATA_ROWS * syn.RAMP_COLS
+    assert float(dem.max()) == syn.RAMP_MAX
+    assert float(script.read("dem", raw=True)["band_1"].min()) == syn.RAMP_NODATA
+    assert bands["red"].dtype == np.uint16  # no scaling declared: could be class codes
 
 
 def test_float_outputs_never_inherit_scaling(run_dir: Path) -> None:

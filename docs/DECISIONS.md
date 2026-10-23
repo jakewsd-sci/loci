@@ -597,3 +597,24 @@ validates its outputs, so it fails that one and says why.
 - Clearing attributes globally with `xr.set_options(keep_attrs=False)`: it hides the symptom for
   scripts loci writes, but not for scripts users write.
 - Writing inherited scaling and trusting the script: that is how this bug happened.
+
+## D-036 script.read gives physical values by default (M4 follow-up, 2026-10-23)
+
+**Context.** D-035 made `script.physical()` the way to get physical values, but scripts had to
+remember to call it. Every failure seen over Sydney came from forgetting it, and the agent writes
+most scripts. The user agreed to make it the default.
+
+**Choice.** `script.read(name)` applies `physical()` to raster bands that hold measurements:
+- bands that declare a scale or offset;
+- float bands with a nodata value, so nodata becomes NaN and drops out of means and medians.
+
+Integer bands without scaling stay as stored, because converting them would break them: class
+maps (such as Sentinel-2's scene classification) and bit-packed quality flags. `read(name,
+raw=True)` returns every band as stored, and `physical()` remains for bands read that way. It is
+idempotent, so calling it on values that are already physical does no harm.
+
+Uint16 integers become float32, which doubles memory. Reads stay lazy, so this matters only for
+what a script computes.
+
+**Alternatives.** Keeping it explicit (D-035): faithful to storage, but easy to forget. Converting
+every band: simpler to state, but it breaks class maps and bit flags.

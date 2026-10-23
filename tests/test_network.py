@@ -34,7 +34,7 @@ NDVI = """
 from loci import script
 
 stack = script.read("stack")
-red, nir = script.physical(stack["red"]), script.physical(stack["nir"])
+red, nir = stack["red"], stack["nir"]
 script.save(((nir - red) / (nir + red)).median("time").rename("ndvi"), "ndvi_median.tif")
 """
 

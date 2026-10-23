@@ -71,8 +71,8 @@ docs/DECISIONS.md  decision log
 - STAC loads never resample or reproject on their own: mixed resolutions or CRSs are errors until
   `resolution=` or `output_crs=` is given, and whatever was done is recorded as a note.
 - Every new data_ref or file a tool makes gets a provenance record (`loci.provenance`) naming its
-  inputs, so `lineage` can trace it. Scripts for `run` read data only through declared inputs and
-  compute on `script.physical()` values, never on raw scaled integers.
+  inputs, so `lineage` can trace it. Scripts for `run` read data only through declared inputs;
+  `script.read()` gives physical values, and `raw=True` is for bands that must stay as stored.
 - Add tools only when a benchmark task needs them. Ask before adding substantial dependencies.
 - Record significant decisions in `docs/DECISIONS.md`: one short entry with context, choice and
   alternatives.
