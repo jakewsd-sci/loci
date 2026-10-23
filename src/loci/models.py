@@ -13,7 +13,7 @@ Conventions:
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 Kind = Literal["raster", "vector"]
 """The two data kinds. Point data is a vector kind with Point geometries."""
@@ -25,6 +25,10 @@ loci (always accompanied by a warning)."""
 StatsMethod = Literal["exact", "overview", "strided"]
 """How raster statistics were computed: from every pixel, from an overview (reduced-resolution
 copy stored in the file), or from every Nth pixel along each axis."""
+
+CheckStatus = Literal["pass", "warn", "fail"]
+"""Outcome of a check. fail: results built on this data are likely wrong. warn: they may be
+biased or need a decision; look before relying on them. pass: the check found nothing."""
 
 Bounds = tuple[float, float, float, float]
 
@@ -171,3 +175,27 @@ class RefSummary(_Model):
     summary: Summary
     warnings: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+class CheckResult(_Model):
+    """One geospatial check on one or more inputs.
+
+    `check` is a stable identifier (e.g. "crs_defined"). `details` holds the measured values the
+    status rests on. `hint` says what to do about a warn or fail.
+    """
+
+    check: str
+    status: CheckStatus
+    data_refs: list[str]
+    message: str
+    details: dict[str, JsonValue] = Field(default_factory=dict)
+    hint: str | None = None
+
+
+class ValidationReport(_Model):
+    """What `validate` returns. `status` is the worst status among the checks."""
+
+    status: CheckStatus
+    data_refs: list[str]
+    counts: dict[CheckStatus, int]
+    checks: list[CheckResult]
