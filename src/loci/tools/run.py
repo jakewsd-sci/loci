@@ -45,13 +45,17 @@ def run(
     Args:
         code: The script's source. Give this or path.
         path: A .py file to run; it is copied into the run folder first.
-        inputs: name -> data_ref. The script reads them with loci.script.read(name).
+        inputs: name -> data_ref. The script reads them with loci.script.read(name), which gives
+            physical values (scale and offset applied, nodata as NaN); read(name, raw=True)
+            gives stored values.
         parameters: JSON-serialisable values, read with loci.script.parameters().
         timeout: Seconds before the script is stopped (at most 3600).
 
-    The script saves outputs with loci.script.save(obj, filename) (or writes into
-    loci.script.output_path(filename)). Spatial outputs become data_refs; every output gets a
-    provenance record naming the script, its hash, the inputs and the parameters.
+    Declare every input and read it through loci.script: files a script opens by itself do not
+    appear in provenance. The script saves outputs with loci.script.save(obj, filename) (or
+    writes into loci.script.output_path(filename)). After a successful run, spatial outputs
+    become data_refs and are validated; every output gets a provenance record naming the
+    script, its hash, the inputs and the parameters.
     """
     source = _source(code, path)
     declared = inputs or {}

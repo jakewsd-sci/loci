@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "loci": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--quiet", "loci-mcp"]
+    }
+  }
+}

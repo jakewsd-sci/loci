@@ -20,3 +20,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code: personal settings (e.g. LOCI_VALIDATION_HOOK=block) stay out of git
+.claude/settings.local.json
