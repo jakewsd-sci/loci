@@ -17,7 +17,7 @@ answer, or make a decision?**
 ```sh
 uv sync                    # create .venv and install the package plus the dev group
 uv run pytest              # tests (network tests deselected)
-uv run pytest -m network   # only tests that need internet access
+uv run pytest -m network   # only tests that need internet access (Sentinel-2 over Sydney)
 uv run ruff check          # lint
 uv run ruff format         # format (CI runs `ruff format --check`)
 uv run mypy                # type-check src/ and tests/
@@ -30,13 +30,14 @@ and 3.13.
 
 ```
 src/loci/        the package
-  io/            readers: files/URLs -> xarray Dataset (rasters) or GeoDataFrame (vectors)  [M1]
+  io/            readers: files, URLs and STAC items -> xarray Dataset or GeoDataFrame  [M1, M3]
   summary/       compact summaries of loaded data                                        [M1]
   checks/        geospatial invariants and the runner behind `validate`                  [M2]
   tools/         tool functions: Workspace + plain args -> pydantic result models        [M1+]
   models.py      result models: the stable interface for MCP and a future UI             [M1]
   workspace.py   data_ref registry on disk under .loci/                                  [M1]
   synthetic.py   fixture writers with exactly known answers (tests and benchmarks)       [M1]
+  render.py      PNG drawing behind `preview`                                            [M3]
   server.py      thin MCP wrapper over tools/                                            [M5]
 tests/           pytest suite; fixtures are generated in code by loci.synthetic
 benchmarks/      five benchmark workflows and run.py                                     [M6]
@@ -65,6 +66,8 @@ docs/DECISIONS.md  decision log
 - New checks are small functions in `checks/` that take `Layer`s and return a `CheckResult` with a
   stable id. Test each one on a fixture built to pass and one built to fail. `checks/runner.py`
   decides where it applies.
+- STAC loads never resample or reproject on their own: mixed resolutions or CRSs are errors until
+  `resolution=` or `output_crs=` is given, and whatever was done is recorded as a note.
 - Add tools only when a benchmark task needs them. Ask before adding substantial dependencies.
 - Record significant decisions in `docs/DECISIONS.md`: one short entry with context, choice and
   alternatives.
@@ -80,7 +83,7 @@ questions, then stop. When something is ambiguous, ask rather than guess.
 - [x] M0: scaffold, uv environment, pytest, linting, CLAUDE.md, DECISIONS.md, CI
 - [x] M1: workspace with `data_ref`; `load` and `inspect` for rasters and vectors; synthetic fixtures
 - [x] M2: `validate` with geospatial invariants, each tested on passing and failing fixtures
-- [ ] M3: `stac_search` and `preview`
+- [x] M3: `stac_search` and `preview`
 - [ ] M4: `run`, provenance sidecars, `lineage`
 - [ ] M5: MCP server, `.mcp.json`, hooks that run validation automatically, end-to-end check
 - [ ] M6: five benchmark tasks and `benchmarks/run.py`

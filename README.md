@@ -23,6 +23,8 @@ The tools are plain Python functions for now. The MCP server arrives in M5.
 ```python
 from loci.workspace import Workspace
 from loci.tools.load import load
+from loci.tools.preview import preview
+from loci.tools.stac_search import stac_search
 from loci.tools.inspect import inspect
 from loci.tools.validate import validate
 
@@ -36,6 +38,13 @@ print(samples.warnings)
 report = validate(ws, [dem.data_ref, samples.data_ref])  # also checked against each other
 for check in report.checks:
     print(check.status, check.check, check.message)
+
+# Sentinel-2 over Sydney Harbour: search, load pixels, look at them
+found = stac_search(
+    ws, bbox=[151.15, -33.90, 151.30, -33.80], start="2024-06-01", end="2024-06-30", max_cloud=20
+)
+stack = load(ws, found.data_ref, bands=["red", "green", "blue"])
+print(preview(ws, stack.data_ref).path)  # PNG of the least cloudy day
 ```
 
 ## Documentation

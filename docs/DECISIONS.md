@@ -360,3 +360,106 @@ because pandas 3 may store timestamps in microseconds; a unit bug found by the t
 
 **Alternatives.** An expected interval argument: precise, but monthly steps vary from 28 to 31 days
 anyway, and the median handles that.
+
+## D-024 Search results are a vector layer of item footprints (M3, 2026-10-23)
+
+**Context.** `stac_search` must return a `data_ref`, and the brief wants everything kept
+general across data types.
+
+**Choice.** The items are saved as a GeoJSON FeatureCollection at `.loci/stac/<data_ref>.json`, with
+the search parameters under `loci:search` for provenance. The `data_ref` reads back as a
+GeoDataFrame of footprints (id, UTC time, cloud cover, grid tile, EPSG). `inspect`, `validate`
+(`time_column="datetime"`) and `preview` therefore work on search results unchanged. The tool's
+result adds a per-month table, a sample of items, CRS and tile counts, and the loadable bands. It
+warns when the limit truncates the search or nothing matched.
+
+**Alternatives.** A separate "items" kind with its own summary: more code paths and nothing gained.
+Keeping only item IDs: loading would need the catalogue again, and a moving catalogue breaks
+reproducibility.
+
+## D-025 load takes a search's data_ref; no silent resampling or reprojection (M3, 2026-10-23)
+
+**Context.** odc-stac quietly resamples bands to the finest resolution and reprojects to whatever
+CRS it is given. Both change the data.
+
+**Choice.** `load(ws, <search data_ref>, bands=[...])` loads pixels lazily through odc-stac into a
+`(time, y, x)` Dataset. The default extent is the search area. Items are grouped by solar day, so
+neighbouring granules from one overpass merge into a single step.
+- `bands=` is required. The error lists the available ones.
+- Bands with different native resolutions are an error until `resolution=` is given.
+- Items in several CRSs are an error until `output_crs=` is given.
+- Any resampling or reprojection is recorded as a note on the data_ref.
+
+`output_crs=` is deliberately not `crs=`: `crs=` only ever assigns a missing CRS (D-013), and the
+two must not be confused.
+
+**Alternatives.** A separate `stac_load` tool: more surface for the same operation. odc-stac's own
+defaults: convenient, and silent.
+
+## D-026 Scale and offset come from the catalogue, and contradictions are flagged (M3, 2026-10-23)
+
+**Context.** Sentinel-2 L2A files declare no scaling. The physical scaling exists only in each
+item's `raster:bands`, and it changes between processing baselines. Testing over Sydney found
+items where the metadata contradicts the pixels. Earth Search marks them
+`earthsearch:boa_offset_applied = true` yet they still declare offset −0.1. Clear harbour water
+stores red values of 15–98, which that offset turns into negative reflectance; without it the
+values are 0.002–0.01, plausible for dark water.
+
+**Choice.** Scale and offset are attached to bands (`scale_factor`, `add_offset`) only when every
+loaded item agrees; otherwise bands stay raw, with a warning. loci keeps the metadata as declared
+and does not "fix" it. When an item says its offset was applied but still declares one, the load
+warns that the offset may be counted twice. `value_range` names the conversion it applied, so an
+out-of-range reflectance points at the scaling.
+
+**Alternatives.** Dropping the offset when `boa_offset_applied` is true: probably right for these
+items, but a provider-specific guess. It is left as an open question for the user.
+
+## D-027 Statistics and previews of STAC stacks come from coarser re-reads (M3, 2026-10-23)
+
+**Context.** Striding through a lazy stack still reads every full-resolution chunk. For a year of
+10 m scenes that is most of the data.
+
+**Choice.** When a STAC stack exceeds `max_pixels`, or is larger than a preview, it is loaded again
+at `resolution × factor`. GDAL serves those reads from the COGs' overviews. The summary labels the
+result `overview` with its decimation, as for files with stored overviews. Measured over Sydney:
+`inspect` of a 41-step, 4-band, 10 m stack (1408 × 1134 px) took 25 s at 1/5 resolution, and a
+true-colour preview took 3.5 s.
+
+**Alternatives.** Statistics on a subset of time steps: faster, but they would miss the cloudy or
+broken scenes the checks are meant to find.
+
+## D-028 preview: small PNGs with stated choices (M3, 2026-10-23)
+
+**Context.** A vision-capable model should be able to look at what it is working on. Every choice
+behind a picture (bands, time, stretch) affects what it sees.
+
+**Choice.** `preview` writes a PNG to `.loci/previews/` at most `width` pixels wide (default 512)
+and reads pixels at about that resolution.
+- **Bands:** true colour when red, green and blue bands exist; otherwise one band in viridis.
+- **Stretch:** one shared 2–98% stretch on physical values. Nodata is transparent.
+- **Time:** the least cloudy step of a STAC load by default (from item metadata), or the step
+  nearest `time=`.
+- **Vectors:** drawn to scale on white, optionally coloured by a column, with geographic layers
+  corrected for latitude.
+
+The result says what the picture shows and why that step was chosen. Matplotlib is used without
+pyplot, so there is no global state.
+
+**Alternatives.** Per-band stretches for RGB: punchier pictures but false colour balance. The first
+time step by default: often cloudy, and so useless.
+
+## D-029 Real-data tests over Sydney (M3, 2026-10-23)
+
+**Context.** The user asked for M3 to be tested over Sydney, Australia rather than Sicily.
+
+**Choice.** All network tests now use Sentinel-2 tile 56HLH (EPSG:32756) over Sydney Harbour:
+- a clear 18 June 2024 scene for loading, inspecting and grid checks;
+- a 2024 search;
+- a June stack for load, preview and validate.
+
+Assertions stick to stable facts (CRS, tile, grid, files written), so catalogue fixes upstream do
+not break them. Two more harmless third-party warnings are filtered by exact message, under D-017:
+odc-geo's use of a deprecated shapely function, and odc-loader's overview reads, which warp from a
+dataset opened without its transform. Tests confirm the values those reads return.
+
+**Alternatives.** Keeping both places: twice the network time for no extra coverage.
