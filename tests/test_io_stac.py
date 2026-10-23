@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -209,3 +211,17 @@ def test_drop_offset_without_offsets_changes_nothing(tmp_path: Path) -> None:
 def test_drop_offset_is_only_for_stac(ramp_tif: Path) -> None:
     with pytest.raises(LoadError, match="drop_offset="):
         read(str(ramp_tif), Format("raster", "geotiff"), ReadOptions(drop_offset=True))
+
+
+@pytest.mark.parametrize(("module", "shown"), [("rasterio.warp", False), ("rasterio", True)])
+def test_only_the_harmless_warp_warning_is_silenced(module: str, shown: bool) -> None:
+    message = "Dataset has no geotransform, gcps, or rpcs. The identity matrix will be returned."
+    code = (
+        "import warnings, rasterio.errors, loci.io.stac\n"
+        f"warnings.warn_explicit({message!r}, rasterio.errors.NotGeoreferencedWarning, 'x.py', 1, "
+        f"module={module!r})\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    assert ("NotGeoreferencedWarning" in result.stderr) is shown

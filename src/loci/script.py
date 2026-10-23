@@ -170,7 +170,7 @@ def write_geotiff(data: xr.Dataset | xr.DataArray, path: Path) -> None:
     bands = [ds[n].transpose("y", "x") for n in names]
     dtype = np.result_type(*[b.dtype for b in bands])
     dtype = np.dtype("uint8") if dtype.kind == "b" else dtype
-    nodata = bands[0].rio.nodata
+    nodata = _nodata(bands[0], path.name)
     if nodata is None and np.issubdtype(dtype, np.floating):
         nodata = float("nan")
     height, width = bands[0].shape
@@ -191,6 +191,20 @@ def write_geotiff(data: xr.Dataset | xr.DataArray, path: Path) -> None:
             dst.write(np.asarray(band.values).astype(dtype), i)
             dst.set_band_description(i, name)
         dst.scales, dst.offsets = _packing(names, bands, dtype, path.name)
+
+
+def _nodata(band: xr.DataArray, filename: str) -> float | None:
+    """The band's nodata. Integer bands cannot hold a NaN nodata, which they inherit through
+    arithmetic on float bands (e.g. a count of valid pixels); it is left out, with a warning."""
+    try:
+        nodata: float | None = band.rio.nodata
+    except ValueError:
+        warn(
+            f"{filename}: integer band(s) carry a NaN nodata, probably inherited from float inputs "
+            "through arithmetic. It was not written, since integers cannot be NaN."
+        )
+        return None
+    return nodata
 
 
 def _packing(

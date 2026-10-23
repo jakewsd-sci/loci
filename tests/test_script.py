@@ -155,6 +155,17 @@ def test_float_outputs_never_inherit_scaling(run_dir: Path) -> None:
     assert "ratio.tif: float band(s) ['ratio'] carry scale_factor/add_offset" in warning
 
 
+def test_integer_outputs_drop_an_inherited_nan_nodata(run_dir: Path) -> None:
+    clear = script.physical(_raw_red()).notnull().astype("int16")  # keeps the NaN _FillValue
+
+    path = script.save(xr.Dataset({"clear": clear}), "clear.tif")
+
+    with rasterio.open(path) as src:
+        assert src.nodata is None
+        assert src.read(1).tolist() == [[0, 1], [1, 1]]
+    assert "integer band(s) carry a NaN nodata" in (run_dir / script.WARNINGS_FILE).read_text()
+
+
 def test_integer_outputs_keep_their_scaling(run_dir: Path) -> None:
     path = script.save(xr.Dataset({"red": _raw_red()}), "red.tif")
 

@@ -6,6 +6,7 @@ pixels goes through odc-stac into the usual raster Dataset, with dims (time, y, 
 """
 
 import json
+import warnings
 from collections import Counter
 from collections.abc import Sequence
 from itertools import islice
@@ -25,6 +26,16 @@ from shapely.geometry import shape
 from loci.errors import LoadError, LociError
 from loci.io.common import ReadResult, crs_to_text, parse_crs
 from loci.models import Bounds, CrsSource, ReadOptions
+
+# odc-loader reads overviews by warping from a dataset opened without its transform, and rasterio
+# warns from its warp module although the values are right (tests check them). Silence exactly
+# that warning, so it does not reach the stderr of scripts and hooks and worry the agent (D-039).
+warnings.filterwarnings(
+    "ignore",
+    message="Dataset has no geotransform, gcps, or rpcs",
+    category=rasterio.errors.NotGeoreferencedWarning,
+    module=r"rasterio\.warp",
+)
 
 EARTH_SEARCH = "https://earth-search.aws.element84.com/v1"
 SEARCH_KEY = "loci:search"
