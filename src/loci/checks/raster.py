@@ -104,12 +104,12 @@ def check_valid_fraction(layer: Layer, min_fraction: float) -> CheckResult:
             hint="Composites and trends over these steps rest on few pixels. Say how they are "
             "handled, for example by dropping or down-weighting them.",
         )
+    share = "All pixels are" if lowest == 1 else f"At least {lowest:.0%} of pixels are"
     return result(
         "valid_fraction",
         "pass",
         [layer],
-        f"At least {lowest:.0%} of pixels are valid in every band (threshold "
-        f"{min_fraction:.0%}){approx}.",
+        f"{share} valid in every band (threshold {min_fraction:.0%}){approx}.",
         details=details,
     )
 

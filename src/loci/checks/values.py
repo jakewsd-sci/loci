@@ -70,7 +70,7 @@ def check_value_range(
     """Compare the extremes of a band or column with the variable's range."""
     where = f"{'band' if layer.raster is not None else 'column'} '{target}'"
     bounds = f"[{_num(variable.low)}, {_num(variable.high)}]"
-    origin = " (variable inferred from the name)" if inferred else ""
+    inferred_note = "variable inferred from the name"
     details = {
         "target": target,
         "variable": variable.name,
@@ -98,7 +98,7 @@ def check_value_range(
             variable.outside,
             [layer],
             f"{variable.label} values in {where} reach {_num(offending)}, outside {bounds} "
-            f"({variable.why}){origin}.",
+            f"({variable.why}{'; ' + inferred_note if inferred else ''}).",
             details=details,
             hint="Check the formula, the scale and offset, and the nodata masking that produced "
             "these values.",
@@ -108,7 +108,7 @@ def check_value_range(
         "pass",
         [layer],
         f"{variable.label} values in {where} span {_num(low)} to {_num(high)}, within "
-        f"{bounds}{origin}.",
+        f"{bounds}{' (' + inferred_note + ')' if inferred else ''}.",
         details=details,
     )
 

@@ -142,3 +142,9 @@ def test_grids_in_different_crss_cannot_be_compared(
 @pytest.mark.parametrize("min_fraction", [0.0, 0.9])
 def test_threshold_is_inclusive(make_layer: MakeLayer, ramp_tif: Path, min_fraction: float) -> None:
     assert check_valid_fraction(make_layer(ramp_tif), min_fraction).status == "pass"
+
+
+def test_fully_valid_bands_say_all() -> None:
+    out = check_valid_fraction(_grid(np.ones((3, 3)), nodata=-1.0), min_fraction=0.5)
+
+    assert out.message == "All pixels are valid in every band (threshold 50%)."

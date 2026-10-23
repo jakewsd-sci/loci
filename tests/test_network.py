@@ -5,6 +5,7 @@ import pytest
 from loci.models import RasterSummary
 from loci.tools.inspect import inspect
 from loci.tools.load import load
+from loci.tools.validate import validate
 from loci.workspace import Workspace
 
 pytestmark = pytest.mark.network
@@ -16,6 +17,7 @@ SCL_COG = (
     "33/S/VA/2024/6/S2A_33SVA_20240630_0_L2A/SCL.tif"
 )
 SCL_CLASSES = range(12)  # scene classification codes 0..11
+RED_COG = SCL_COG.replace("SCL.tif", "B04.tif")
 
 
 def test_remote_cog_loads_lazily_and_inspects_from_an_overview(ws: Workspace) -> None:
@@ -35,3 +37,15 @@ def test_remote_cog_loads_lazily_and_inspects_from_an_overview(ws: Workspace) ->
     assert stats is not None and stats.min is not None and stats.max is not None
     assert stats.min in SCL_CLASSES and stats.max in SCL_CLASSES
     assert stats.valid_fraction > 0.5
+
+
+def test_validate_flags_mixed_resolutions_in_a_real_scene(ws: Workspace) -> None:
+    red, scl = load(ws, RED_COG).data_ref, load(ws, SCL_COG).data_ref
+
+    report = validate(ws, [red, scl])
+    statuses = {c.check: c.status for c in report.checks}
+
+    assert statuses["crs_consistent"] == "pass"
+    assert statuses["extents_overlap"] == "pass"
+    assert statuses["resolution_consistent"] == "warn"  # 10 m red band, 20 m classification
+    assert report.status == "warn"

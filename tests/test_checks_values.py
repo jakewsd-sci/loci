@@ -42,7 +42,9 @@ def test_ndvi_out_of_range_fails(make_layer: MakeLayer, bad_ndvi_tif: Path) -> N
     out = check_band_range(make_layer(bad_ndvi_tif), "ndvi", VARIABLES["ndvi"], inferred=False)
 
     assert out.status == "fail"
-    assert "reach 1.2, outside [-1, 1]" in out.message
+    assert out.message == (
+        "NDVI values in band 'ndvi' reach 1.2, outside [-1, 1] (a normalised difference)."
+    )
     assert out.details["max"] == syn.NDVI_BAD
 
 
