@@ -4,7 +4,8 @@ import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import { Icon } from "../icons";
-import type { LayerInfo, RunResult, ScriptFile } from "../types";
+import type { LayerInfo, MapFocus, RunResult, ScriptFile } from "../types";
+import { CheckList } from "./Checks";
 import { StatusBadge } from "./LayersPanel";
 
 // Monaco from the installed package, not a CDN, so the app works offline.
@@ -49,11 +50,13 @@ function declaredInputs(code: string): string[] {
 interface Props {
   open: boolean;
   layers: LayerInfo[];
+  byRef: Map<string, LayerInfo>;
   request: { path: string; key: number } | null; // a script to open, from elsewhere in the app
   onRef: (ref: string) => void;
+  onFocus: (focus: MapFocus) => void;
 }
 
-export function CodePanel({ open, layers, request, onRef }: Props) {
+export function CodePanel({ open, layers, byRef, request, onRef, onFocus }: Props) {
   const [files, setFiles] = useState<ScriptFile[]>([]);
   const [path, setPath] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -218,6 +221,12 @@ export function CodePanel({ open, layers, request, onRef }: Props) {
               {o.data_ref && <StatusBadge status={o.validation} />}
             </div>
           ))}
+          {result.input_checks && (
+            <>
+              <span className="label">Inputs checked together</span>
+              <CheckList checks={result.input_checks.checks} byRef={byRef} onFocus={onFocus} />
+            </>
+          )}
           {[...result.warnings, ...result.notes].map((w) => (
             <span key={w} style={{ fontSize: 12, color: "var(--muted)" }}>{w}</span>
           ))}

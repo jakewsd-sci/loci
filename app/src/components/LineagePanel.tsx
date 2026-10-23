@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "../icons";
-import type { LayerDetail } from "../types";
+import type { LayerDetail, LayerInfo, MapFocus } from "../types";
+import { CheckList } from "./Checks";
 import { StatusBadge } from "./LayersPanel";
 
 interface Props {
   open: boolean;
   selected: string | null;
   version: number; // changes when the workspace changes, so the detail is reloaded
+  byRef: Map<string, LayerInfo>;
   onRef: (ref: string) => void;
   onOpenScript: (path: string) => void;
+  onFocus: (focus: MapFocus) => void;
 }
 
 /** A script under the project's analysis/ folder, as the code panel names it. */
@@ -19,7 +22,7 @@ function analysisPath(path: unknown): string | null {
   return at >= 0 ? text.slice(at + 1) : null;
 }
 
-export function LineagePanel({ open, selected, version, onRef, onOpenScript }: Props) {
+export function LineagePanel({ open, selected, version, byRef, onRef, onOpenScript, onFocus }: Props) {
   const [detail, setDetail] = useState<LayerDetail | null>(null);
   const [checking, setChecking] = useState(false);
   const [reload, setReload] = useState(0);
@@ -70,18 +73,7 @@ export function LineagePanel({ open, selected, version, onRef, onOpenScript }: P
               </button>
             </div>
             {detail.validation ? (
-              <ul className="checks">
-                {detail.validation.checks.map((c, i) => (
-                  <li key={`${c.check}-${i}`}>
-                    <div className="top">
-                      <StatusBadge status={c.status} />
-                      <span className="id">{c.check}</span>
-                    </div>
-                    <span className="message">{c.message}</span>
-                    {c.hint && c.status !== "pass" && <span className="hint">{c.hint}</span>}
-                  </li>
-                ))}
-              </ul>
+              <CheckList checks={detail.validation.checks} byRef={byRef} onFocus={onFocus} />
             ) : (
               <span style={{ color: "var(--muted)", fontSize: 12 }}>Not checked yet.</span>
             )}

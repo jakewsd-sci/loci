@@ -21,14 +21,22 @@ export interface LayerInfo {
 
 export interface LayerDisplay {
   data_ref: string;
-  mode: "tiles" | "image" | "geojson";
-  url: string;
-  coordinates: [number, number][] | null;
+  mode: "tiles" | "geojson";
+  url: string; // for a time stack, draws time step `step`
   bands: string[] | null;
-  stretch: [number, number] | null;
+  stretch: [number, number] | null; // the same for every time step
   colormap: string | null;
   time: string | null;
+  times: string[]; // every time step of a time stack
+  step: number | null;
   note: string | null;
+}
+
+export interface StepInfo {
+  time: string;
+  cloud_cover: number | null; // % of the scene, from item metadata
+  scene_class: string | null; // Sentinel-2 scene classification at the point
+  obscured: boolean; // cloud, shadow, cirrus, defective or no data at the point
 }
 
 export interface PointValues {
@@ -38,7 +46,7 @@ export interface PointValues {
   x: number;
   y: number;
   crs: string;
-  times: string[];
+  steps: StepInfo[];
   bands: { name: string; values: (number | null)[] }[];
   features: Record<string, string>[];
 }
@@ -48,6 +56,7 @@ export interface CheckResult {
   status: CheckStatus;
   data_refs: string[];
   message: string;
+  details: Record<string, unknown>;
   hint: string | null;
 }
 
@@ -116,9 +125,15 @@ export interface RunResult {
   stdout: string;
   stderr: string;
   outputs: RunOutput[];
+  input_checks: ValidationReport | null;
   warnings: string[];
   notes: string[];
 }
+
+/** Something a check found, drawn on the map. */
+export type MapFocus =
+  | { kind: "outside"; ref: string; band: string; range: [number, number | null]; label: string }
+  | { kind: "footprints"; refs: string[]; status: CheckStatus; label: string };
 
 export interface Model {
   id: string;

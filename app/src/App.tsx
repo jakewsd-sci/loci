@@ -5,13 +5,28 @@ import { CodePanel } from "./components/CodePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { LineagePanel } from "./components/LineagePanel";
 import { type DrawnLayer, type MapHandle, MapView } from "./components/MapView";
-import { Inspector, Legend, Readout } from "./components/Overlays";
+import { FocusChip, Inspector, Legend, Readout } from "./components/Overlays";
 import { Icon, Logo } from "./icons";
-import type { LayerDisplay, LayerInfo, Model, PointValues } from "./types";
+import type { Bounds, LayerDisplay, LayerInfo, MapFocus, Model, PointValues } from "./types";
 
 type Tab = "agent" | "code" | "lineage";
 
 const message = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
+
+/** A layer's display at another time step: same bands and stretch, so dates compare. */
+function atStep(display: LayerDisplay, step: number | undefined): LayerDisplay {
+  if (step == null || display.step == null || step === display.step) return display;
+  return { ...display, step, time: display.times[step], url: display.url.replace(/step=\d+/, `step=${step}`) };
+}
+
+function union(bounds: Bounds[]): Bounds {
+  return [
+    Math.min(...bounds.map((b) => b[0])),
+    Math.min(...bounds.map((b) => b[1])),
+    Math.max(...bounds.map((b) => b[2])),
+    Math.max(...bounds.map((b) => b[3])),
+  ];
+}
 
 export function App() {
   const [project, setProject] = useState("");
@@ -30,11 +45,17 @@ export function App() {
   const [point, setPoint] = useState<[number, number] | null>(null);
   const [values, setValues] = useState<PointValues | null>(null);
   const [pointError, setPointError] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+  const picked = useRef(0); // only the latest click's values are shown
   const [cursor, setCursor] = useState<[number, number] | null>(null);
   const [scaleSlot, setScaleSlot] = useState<HTMLDivElement | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [scriptRequest, setScriptRequest] = useState<{ path: string; key: number } | null>(null);
   const [finder, setFinder] = useState("");
+  const [steps, setSteps] = useState<Record<string, number>>({});
+  const [focus, setFocus] = useState<MapFocus | null>(null);
+  const [area, setArea] = useState<Bounds | null>(null);
+  const [drawing, setDrawing] = useState(false);
   const mapRef = useRef<MapHandle>(null);
   const known = useRef<Set<string> | null>(null);
   const loading = useRef(new Set<string>());
@@ -107,14 +128,63 @@ export function App() {
     }
   }, [layers, visible, bands, displays]);
 
+  const shown = useMemo(
+    () => Object.fromEntries(Object.entries(displays).map(([ref, d]) => [ref, atStep(d, steps[ref])])),
+    [displays, steps],
+  );
+
   const drawn: DrawnLayer[] = useMemo(
     () =>
       [...layers]
         .reverse()
-        .filter((l) => visible[l.data_ref] && displays[l.data_ref])
-        .map((l) => ({ info: l, display: displays[l.data_ref], opacity: opacity[l.data_ref] ?? 1 })),
-    [layers, visible, displays, opacity],
+        .filter((l) => visible[l.data_ref] && shown[l.data_ref])
+        .map((l) => ({ info: l, display: shown[l.data_ref], opacity: opacity[l.data_ref] ?? 1 })),
+    [layers, visible, shown, opacity],
   );
+
+  // What a check found, on the map: out-of-range pixels of one band, or the inputs' footprints.
+  const outsideTiles = useMemo(() => {
+    if (focus?.kind !== "outside") return null;
+    const step = shown[focus.ref]?.step;
+    const [low, high] = focus.range;
+    return `/api/layers/${focus.ref}/tiles/{z}/{x}/{y}.png?bands=${encodeURIComponent(focus.band)}&outside=${low},${high ?? "inf"}${step != null ? `&step=${step}` : ""}`;
+  }, [focus, shown]);
+  const footprints = useMemo(
+    () =>
+      focus?.kind === "footprints"
+        ? focus.refs.flatMap((r) => {
+            const bounds = byRef.get(r)?.bounds_wgs84;
+            return bounds ? [{ bounds, status: focus.status }] : [];
+          })
+        : [],
+    [focus, byRef],
+  );
+
+  const showFocus = useCallback(
+    (next: MapFocus) => {
+      setFocus(next);
+      const refs = next.kind === "outside" ? [next.ref] : next.refs;
+      if (next.kind === "outside") {
+        setSelected(next.ref);
+        setVisible((v) => ({ ...v, [next.ref]: true }));
+      }
+      const bounds = refs.flatMap((r) => (byRef.get(r)?.bounds_wgs84 ? [byRef.get(r)!.bounds_wgs84!] : []));
+      if (bounds.length) mapRef.current?.fit(union(bounds));
+    },
+    [byRef],
+  );
+
+  const setStep = useCallback((ref: string, step: number) => {
+    setSteps((s) => ({ ...s, [ref]: step }));
+    setVisible((v) => ({ ...v, [ref]: true }));
+  }, []);
+
+  useEffect(() => {
+    if (!drawing) return;
+    const cancel = (e: KeyboardEvent) => e.key === "Escape" && setDrawing(false);
+    window.addEventListener("keydown", cancel);
+    return () => window.removeEventListener("keydown", cancel);
+  }, [drawing]);
 
   const selectRef = useCallback(
     (ref: string) => {
@@ -137,12 +207,17 @@ export function App() {
         drawn[drawn.length - 1]?.info.data_ref;
       setPoint([lon, lat]);
       if (!target) return;
+      const click = ++picked.current;
+      setReading(true);
+      setValues(null);
+      setPointError(null);
       try {
-        setValues(await api.point(target, lon, lat));
-        setPointError(null);
+        const found = await api.point(target, lon, lat);
+        if (click === picked.current) setValues(found);
       } catch (e) {
-        setValues(null);
-        setPointError(message(e));
+        if (click === picked.current) setPointError(message(e));
+      } finally {
+        if (click === picked.current) setReading(false);
       }
     },
     [selected, visible, drawn],
@@ -155,6 +230,7 @@ export function App() {
   }, [toast]);
 
   const chosen = selected ? byRef.get(selected) ?? null : null;
+  const inspected = values ? shown[values.data_ref] : undefined;
   const matches = finder.trim()
     ? layers.filter((l) => `${l.name} ${l.data_ref}`.toLowerCase().includes(finder.toLowerCase())).slice(0, 6)
     : [];
@@ -196,6 +272,15 @@ export function App() {
           basemapVisible={basemap}
           marker={point}
           scaleSlot={scaleSlot}
+          outsideTiles={outsideTiles}
+          footprints={footprints}
+          area={area}
+          drawing={drawing}
+          onArea={(bounds) => {
+            setArea(bounds);
+            setDrawing(false);
+            setTab("agent");
+          }}
           onPick={(lon, lat) => void pick(lon, lat)}
           onCursor={setCursor}
         />
@@ -232,16 +317,32 @@ export function App() {
           <button type="button" className="ghost" aria-label="Zoom in" onClick={() => mapRef.current?.zoomIn()}><Icon name="plus" size={16} /></button>
           <button type="button" className="ghost" aria-label="Zoom out" onClick={() => mapRef.current?.zoomOut()}><Icon name="minus" size={16} /></button>
           <button type="button" className="ghost" aria-label="Zoom to the selected layer" disabled={!selected} onClick={() => selected && fit(selected)}><Icon name="fit" size={16} /></button>
+          <button
+            type="button"
+            className={`ghost${drawing ? " active" : ""}`}
+            aria-label={drawing ? "Stop drawing (Esc)" : "Draw an area to ask about"}
+            aria-pressed={drawing}
+            title={drawing ? "Drag a box on the map; Esc stops" : "Draw an area to ask about"}
+            onClick={() => setDrawing((d) => !d)}
+          >
+            <Icon name="area" size={16} />
+          </button>
         </div>
+        {drawing && <div className="overlay hint-chip glass" role="status">Drag a box on the map to choose an area. Esc cancels.</div>}
+        {focus && <FocusChip focus={focus} onClose={() => setFocus(null)} />}
         <Inspector
           key={`${point?.join(",")}`}
           values={values}
           layer={values ? byRef.get(values.data_ref) ?? null : chosen}
           error={pointError}
-          onClose={() => { setPoint(null); setValues(null); setPointError(null); }}
+          reading={reading}
+          step={inspected?.step ?? null}
+          band={inspected?.bands?.length === 1 ? inspected.bands[0] : null}
+          onStep={(step) => values && setStep(values.data_ref, step)}
+          onClose={() => { picked.current++; setPoint(null); setValues(null); setPointError(null); setReading(false); }}
         />
-        {chosen && visible[chosen.data_ref] && displays[chosen.data_ref] && (
-          <Legend layer={chosen} display={displays[chosen.data_ref]} />
+        {chosen && visible[chosen.data_ref] && shown[chosen.data_ref] && (
+          <Legend layer={chosen} display={shown[chosen.data_ref]} onStep={(step) => setStep(chosen.data_ref, step)} />
         )}
         <Readout cursor={cursor} crs={chosen?.crs ?? null} scaleRef={setScaleSlot} />
         {layers.length === 0 && (
@@ -268,14 +369,28 @@ export function App() {
             ))}
           </select>
         </div>
-        <AgentPanel open={tab === "agent"} model={model} layers={layers} selected={chosen} point={point} onRef={selectRef} />
-        <CodePanel open={tab === "code"} layers={layers} request={scriptRequest} onRef={selectRef} />
+        <AgentPanel
+          open={tab === "agent"}
+          model={model}
+          layers={layers}
+          byRef={byRef}
+          selected={chosen}
+          shownTime={chosen ? shown[chosen.data_ref]?.time ?? null : null}
+          point={point}
+          area={area}
+          onClearArea={() => setArea(null)}
+          onRef={selectRef}
+          onFocus={showFocus}
+        />
+        <CodePanel open={tab === "code"} layers={layers} byRef={byRef} request={scriptRequest} onRef={selectRef} onFocus={showFocus} />
         <LineagePanel
           open={tab === "lineage"}
           selected={selected}
           version={version}
+          byRef={byRef}
           onRef={selectRef}
           onOpenScript={(path) => { setScriptRequest({ path, key: Date.now() }); setTab("code"); }}
+          onFocus={showFocus}
         />
       </aside>
     </div>
