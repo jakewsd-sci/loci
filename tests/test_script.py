@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import rasterio
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
 
@@ -73,6 +74,49 @@ def test_unsupported_combinations_and_bad_names_are_refused(run_dir: Path) -> No
         script.save(pd.DataFrame({"a": [1]}), "a.tif")
     with pytest.raises(ValueError, match="plain file names"):
         script.save({"a": 1}, "../escape.json")
+
+
+def _raw_red() -> xr.DataArray:
+    """uint16 reflectance as loaded from STAC: nodata 0, scale 0.0001, offset -0.1."""
+    raw = xr.DataArray(
+        np.array([[0, 1000], [2000, 3000]], dtype="uint16"),
+        coords={"y": [1.5, 0.5], "x": [0.5, 1.5]},
+        dims=("y", "x"),
+        attrs={"scale_factor": 0.0001, "add_offset": -0.1, "units": "1"},
+    )
+    return raw.rio.write_crs(syn.UTM33N).rio.write_nodata(0)
+
+
+def test_physical_masks_nodata_applies_scaling_and_drops_packing_attrs() -> None:
+    red = script.physical(_raw_red())
+
+    assert red.dtype == np.float32
+    assert np.isnan(red.values[0, 0])
+    np.testing.assert_allclose(red.values.ravel()[1:], [0.0, 0.1, 0.2], atol=1e-6)
+    assert red.attrs.get("units") == "1"
+    assert "scale_factor" not in red.attrs and "add_offset" not in red.attrs
+    assert np.isnan(red.rio.nodata)
+
+
+def test_float_outputs_never_inherit_scaling(run_dir: Path) -> None:
+    raw = _raw_red()
+    ratio = raw.astype("float32") / 3000  # xarray keeps the raw band's attrs
+
+    path = script.save(xr.Dataset({"ratio": ratio}), "ratio.tif")
+
+    with rasterio.open(path) as src:
+        assert (src.scales, src.offsets) == ((1.0,), (0.0,))
+    warning = (run_dir / script.WARNINGS_FILE).read_text()
+    assert "ratio.tif: float band(s) ['ratio'] carry scale_factor/add_offset" in warning
+
+
+def test_integer_outputs_keep_their_scaling(run_dir: Path) -> None:
+    path = script.save(xr.Dataset({"red": _raw_red()}), "red.tif")
+
+    with rasterio.open(path) as src:
+        assert (src.scales, src.offsets) == ((0.0001,), (-0.1,))
+        assert src.nodata == 0
+    assert not (run_dir / script.WARNINGS_FILE).exists()
 
 
 def test_parameters_and_declared_inputs(run_dir: Path, ws: Workspace, ramp_tif: Path) -> None:

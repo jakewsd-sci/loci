@@ -19,7 +19,7 @@ from loci import provenance
 from loci.errors import LociError
 from loci.io import detect_format, read
 from loci.models import ReadOptions, RunOutput, RunResult, RunStatus, SourceInput
-from loci.script import INPUTS_FILE, OUTPUTS_DIR, PARAMETERS_FILE, RUN_DIR_ENV
+from loci.script import INPUTS_FILE, OUTPUTS_DIR, PARAMETERS_FILE, RUN_DIR_ENV, WARNINGS_FILE
 from loci.tools.validate import validate
 from loci.workspace import ROOT_ENV, Workspace
 
@@ -107,7 +107,7 @@ def run(
         stdout=_tail(stdout),
         stderr=_tail(stderr),
         outputs=outputs,
-        warnings=_warnings(status, exit_code, timeout, outputs),
+        warnings=_warnings(status, exit_code, timeout, outputs) + _script_warnings(run_dir),
         notes=_notes(status, outputs),
     )
     (run_dir / "run.json").write_text(
@@ -220,6 +220,12 @@ def _warnings(
     if failed:
         warnings.append(f"Output(s) {failed} failed validation; see their problems.")
     return warnings
+
+
+def _script_warnings(run_dir: Path) -> list[str]:
+    """Warnings the script recorded through loci.script.warn (e.g. dropped scaling)."""
+    path = run_dir / WARNINGS_FILE
+    return [line for line in path.read_text().splitlines() if line] if path.exists() else []
 
 
 def _notes(status: RunStatus, outputs: list[RunOutput]) -> list[str]:

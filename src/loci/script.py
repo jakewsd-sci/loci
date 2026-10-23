@@ -11,10 +11,16 @@ Inside a run:
 Only inputs declared in run(inputs={...}) can be read this way, so the provenance of every output
 lists everything the script read through loci. Anything saved under outputs/ is registered when
 the run succeeds.
+
+Compute on physical values: script.physical(stack["red"]) masks nodata, applies scale and offset,
+and drops those attributes. xarray carries attributes through arithmetic, so a ratio of raw bands
+would otherwise inherit their scale_factor; save() never writes inherited scaling for float bands
+and records a warning when it drops one.
 """
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +39,8 @@ RUN_DIR_ENV = "LOCI_RUN_DIR"
 INPUTS_FILE = "inputs.json"
 PARAMETERS_FILE = "parameters.json"
 OUTPUTS_DIR = "outputs"
+WARNINGS_FILE = "warnings.txt"
+PACKING_ATTRS = ("scale_factor", "add_offset", "_FillValue", "nodata", "missing_value")
 VECTOR_SUFFIXES = {".gpkg", ".geojson", ".shp", ".parquet"}
 
 
@@ -66,6 +74,26 @@ def read(name: str) -> Data:
             hint="Declare every input in run(inputs={name: data_ref}) so provenance lists it.",
         )
     return Workspace.from_env().open(declared[name])
+
+
+def physical(da: xr.DataArray) -> xr.DataArray:
+    """Physical values as floats: nodata to NaN, scale and offset applied, packing attrs dropped."""
+    nodata = da.rio.nodata
+    values = da.where(da != nodata) if nodata is not None else da
+    dtype = np.float64 if da.dtype == np.float64 else np.float32
+    scaled = values.astype(dtype) * da.attrs.get("scale_factor", 1.0) + da.attrs.get(
+        "add_offset", 0.0
+    )
+    scaled.attrs = {k: v for k, v in da.attrs.items() if k not in PACKING_ATTRS}
+    scaled.encoding = {}
+    return scaled.rio.write_nodata(np.nan)
+
+
+def warn(message: str) -> None:
+    """Record a warning that run reports in its result (and prints it to stderr)."""
+    with (run_dir() / WARNINGS_FILE).open("a") as f:
+        f.write(message.replace("\n", " ") + "\n")
+    print(f"loci.script warning: {message}", file=sys.stderr)
 
 
 def output_path(filename: str) -> Path:
@@ -141,5 +169,22 @@ def write_geotiff(data: xr.Dataset | xr.DataArray, path: Path) -> None:
         for i, (name, band) in enumerate(zip(names, bands, strict=True), start=1):
             dst.write(np.asarray(band.values).astype(dtype), i)
             dst.set_band_description(i, name)
-        dst.scales = [float(b.attrs.get("scale_factor", 1.0)) for b in bands]
-        dst.offsets = [float(b.attrs.get("add_offset", 0.0)) for b in bands]
+        dst.scales, dst.offsets = _packing(names, bands, dtype, path.name)
+
+
+def _packing(
+    names: list[str], bands: list[xr.DataArray], dtype: np.dtype, filename: str
+) -> tuple[list[float], list[float]]:
+    """Scale and offset to write: kept for integer bands (packing), dropped for float bands."""
+    scales = [float(b.attrs.get("scale_factor", 1.0)) for b in bands]
+    offsets = [float(b.attrs.get("add_offset", 0.0)) for b in bands]
+    if dtype.kind in "iu":
+        return scales, offsets
+    inherited = [n for n, s, o in zip(names, scales, offsets, strict=True) if (s, o) != (1.0, 0.0)]
+    if inherited:
+        warn(
+            f"{filename}: float band(s) {inherited} carry scale_factor/add_offset attributes, "
+            "probably inherited from raw inputs through arithmetic. They were not written: float "
+            "outputs are stored as physical values. Use script.physical() on raw bands first."
+        )
+    return [1.0] * len(bands), [0.0] * len(bands)

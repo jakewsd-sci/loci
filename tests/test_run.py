@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pystac
 import pytest
 import xarray as xr
 
@@ -12,6 +13,7 @@ from loci import synthetic as syn
 from loci.errors import LociError, UnknownRefError
 from loci.tools.load import load
 from loci.tools.run import run
+from loci.tools.stac_search import stac_search
 from loci.workspace import Workspace
 
 DOUBLE = """
@@ -149,3 +151,37 @@ def test_run_arguments_are_checked_before_anything_runs(ws: Workspace) -> None:
     with pytest.raises(LociError, match="JSON"):
         run(ws, code="pass", parameters={"when": object()})
     assert not list(ws.runs_dir.iterdir())
+
+
+def _ndvi_code(convert: str) -> str:
+    return (
+        "from loci import script\n"
+        "stack = script.read('stack')\n"
+        f"red, nir = {convert}(stack['red']), {convert}(stack['nir'])\n"
+        "script.save(((nir - red) / (nir + red)).median('time').rename('ndvi'), 'ndvi.tif')\n"
+    )
+
+
+def test_ndvi_from_physical_values_is_right_and_raw_ratios_are_flagged(
+    ws: Workspace, stac_scenes: list[pystac.Item]
+) -> None:
+    search = stac_search(
+        ws, bbox=list(stac_scenes[0].bbox or []), start="2024-03-01", end="2024-03-31"
+    )
+    stack = load(ws, search.data_ref, bands=["red", "nir"]).data_ref
+
+    physical = run(ws, code=_ndvi_code("script.physical"), inputs={"stack": stack})
+    raw = run(ws, code=_ndvi_code(""), inputs={"stack": stack})
+
+    def ndvi(result_ref: str | None) -> float:
+        assert result_ref is not None
+        opened = ws.open(result_ref)
+        assert isinstance(opened, xr.Dataset)
+        return float(opened["ndvi"].mean())
+
+    # Physical red on the three scenes is 0.00, 0.01 and 0.02 and nir is 0.2, so the median NDVI
+    # is 0.19 / 0.21. Raw digital numbers ignore the offset and give 1900 / 4100 instead.
+    assert ndvi(physical.outputs[0].data_ref) == pytest.approx(0.19 / 0.21, abs=1e-6)
+    assert not any("scale_factor" in w for w in physical.warnings)
+    assert ndvi(raw.outputs[0].data_ref) == pytest.approx(1900 / 4100, abs=1e-6)
+    assert any("ndvi.tif: float band(s) ['ndvi']" in w for w in raw.warnings)
