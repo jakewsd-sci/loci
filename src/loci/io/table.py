@@ -35,9 +35,10 @@ def read_points_table(uri: str, fmt: str, options: ReadOptions) -> ReadResult:
     gdf = gpd.GeoDataFrame(df, geometry=geometry, crs=crs)
 
     if bad.any():
+        n = int(bad.sum())
         warnings.append(
-            f"{int(bad.sum())} of {len(df)} rows have a missing or non-numeric coordinate in "
-            f"{x_col!r}/{y_col!r}; they are kept with a null geometry."
+            f"{n} of {len(df)} {'row has' if n == 1 else 'rows have'} a missing or non-numeric "
+            f"coordinate in {x_col!r}/{y_col!r}; kept with a null geometry."
         )
     resolved = ReadOptions(
         x_col=x_col, y_col=y_col, crs=crs_to_text(crs) if crs is not None else None

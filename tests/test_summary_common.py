@@ -5,7 +5,15 @@ import pandas as pd
 import pytest
 
 from loci.models import InvalidGeometry
-from loci.summary.common import crs_info, extent, iso, sig, take_within_budget, truncate
+from loci.summary.common import (
+    counted,
+    crs_info,
+    extent,
+    iso,
+    sig,
+    take_within_budget,
+    truncate,
+)
 
 
 def _items(n: int, reason: str = "x") -> list[InvalidGeometry]:
@@ -53,6 +61,11 @@ def test_sig_rounds_to_six_significant_figures(value: float, expected: float) ->
 @pytest.mark.parametrize("value", [None, math.nan, math.inf, -math.inf])
 def test_sig_returns_none_for_missing_or_non_finite(value: float | None) -> None:
     assert sig(value) is None
+
+
+def test_counted_matches_phrase_to_count() -> None:
+    assert counted(1, "band is", "bands are") == "1 band is"
+    assert counted(3, "band is", "bands are") == "3 bands are"
 
 
 def test_truncate_marks_cut_text() -> None:

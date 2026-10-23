@@ -86,7 +86,7 @@ def test_duplicate_point_locations_are_noted() -> None:
 
     assert summary.points is not None
     assert summary.points.duplicate_locations == 1
-    assert any("share a location" in n for n in vector_notes(summary))
+    assert "1 point shares a location" in vector_notes(summary)[0]
 
 
 def test_attribute_list_is_capped(wide_csv: Path) -> None:

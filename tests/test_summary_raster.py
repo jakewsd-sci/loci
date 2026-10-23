@@ -123,6 +123,7 @@ def test_time_coverage_and_stats_across_time() -> None:
     summary = summarise_raster(ds, stats=plan_stats(ds))
 
     assert summary.dims == {"time": syn.TS_STEPS, "y": syn.TS_SIZE, "x": syn.TS_SIZE}
+    assert list(summary.dims) == ["time", "y", "x"]
     assert summary.time is not None
     assert (summary.time.start, summary.time.end) == (syn.TS_START, syn.TS_END)
     assert summary.time.steps == syn.TS_STEPS

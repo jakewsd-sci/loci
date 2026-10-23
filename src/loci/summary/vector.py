@@ -17,7 +17,15 @@ from loci.models import (
     PointsSummary,
     VectorSummary,
 )
-from loci.summary.common import crs_info, extent, iso, sig, take_within_budget, truncate
+from loci.summary.common import (
+    counted,
+    crs_info,
+    extent,
+    iso,
+    sig,
+    take_within_budget,
+    truncate,
+)
 
 MAX_ATTRIBUTES = 30
 TOP_VALUES = 3
@@ -84,15 +92,18 @@ def vector_warnings(summary: VectorSummary) -> list[str]:
     """Geometry problems likely to break or bias analysis."""
     warnings = []
     if summary.null_geometries:
-        warnings.append(f"{summary.null_geometries} features have no geometry.")
+        has = counted(summary.null_geometries, "feature has", "features have")
+        warnings.append(f"{has} no geometry.")
     if summary.empty_geometries:
-        warnings.append(f"{summary.empty_geometries} features have empty geometries.")
+        has = counted(summary.empty_geometries, "feature has", "features have")
+        warnings.append(f"{has} an empty geometry.")
     invalid = summary.invalid_geometries
     if invalid.count:
         first = invalid.examples[0]
+        has = counted(invalid.count, "feature has", "features have")
         warnings.append(
-            f"{invalid.count} features have invalid geometries (first: row {first.row}, "
-            f"{first.reason}). Overlays and areas involving them may fail or be wrong."
+            f"{has} an invalid geometry (first: row {first.row}, {first.reason}). Overlays and "
+            "areas involving them may fail or be wrong."
         )
     return warnings
 
@@ -100,15 +111,14 @@ def vector_warnings(summary: VectorSummary) -> list[str]:
 def vector_notes(summary: VectorSummary) -> list[str]:
     notes = []
     if summary.points is not None and summary.points.duplicate_locations:
+        shares = counted(summary.points.duplicate_locations, "point shares", "points share")
         notes.append(
-            f"{summary.points.duplicate_locations} points share a location with another point; "
-            "this matters for interpolation and cross-validation."
+            f"{shares} a location with another point; this matters for interpolation and "
+            "cross-validation."
         )
     if summary.attributes_omitted:
-        notes.append(
-            f"{summary.attributes_omitted} more attributes are not listed; summaries show the "
-            f"first {len(summary.attributes)}."
-        )
+        more = counted(summary.attributes_omitted, "more attribute is", "more attributes are")
+        notes.append(f"{more} not listed; summaries show the first {len(summary.attributes)}.")
     return notes
 
 

@@ -48,6 +48,11 @@ def sig(value: Any, digits: int = SIGNIFICANT_DIGITS) -> float | None:
     return round(x, digits - 1 - math.floor(math.log10(abs(x))))
 
 
+def counted(n: int, one: str, many: str) -> str:
+    """A count with the matching phrase: counted(1, "band is", "bands are") -> '1 band is'."""
+    return f"{n} {one if n == 1 else many}"
+
+
 def truncate(text: str, limit: int = MAX_TEXT) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 

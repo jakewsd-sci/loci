@@ -21,7 +21,7 @@ from loci.models import (
     StatsMethod,
     TimeCoverage,
 )
-from loci.summary.common import crs_info, extent, iso, sig, take_within_budget
+from loci.summary.common import counted, crs_info, extent, iso, sig, take_within_budget
 
 DEFAULT_MAX_PIXELS = 4_000_000
 MAX_BANDS = 20
@@ -119,7 +119,7 @@ def summarise_raster(
         crs_source=crs_source,
         extent=extent(ds.rio.bounds(), ds.rio.crs),
         resolution=(sig(abs(xres)) or 0.0, sig(abs(yres)) or 0.0),
-        dims={str(k): int(v) for k, v in ds.sizes.items()},
+        dims=_dims(ds),
         time=time_coverage(ds),
         bands=bands,
         bands_omitted=len(names) - len(bands),
@@ -163,8 +163,8 @@ def raster_notes(summary: RasterSummary) -> list[str]:
         )
     if summary.bands_omitted:
         notes.append(
-            f"{summary.bands_omitted} more bands are not listed; summaries show the first "
-            f"{len(summary.bands)}."
+            f"{counted(summary.bands_omitted, 'more band is', 'more bands are')} not listed; "
+            f"summaries show the first {len(summary.bands)}."
         )
     return notes
 
@@ -181,6 +181,13 @@ def _band_summary(da: xr.DataArray, sample: xr.DataArray | None) -> BandSummary:
         offset=None if offset in (None, 0.0) else sig(offset),
         stats=band_stats(np.asarray(sample.values), nodata) if sample is not None else None,
     )
+
+
+def _dims(ds: xr.Dataset) -> dict[str, int]:
+    """Dimension sizes in the bands' own order, e.g. time, y, x."""
+    first = next(iter(ds.data_vars.values()), None)
+    order = first.dims if first is not None else tuple(ds.sizes)
+    return {str(d): int(ds.sizes[d]) for d in order}
 
 
 def _float_or_none(value: Any) -> float | None:
