@@ -1,0 +1,144 @@
+import { useEffect, useState } from "react";
+import { api } from "../api";
+import { Icon } from "../icons";
+import type { LayerDetail } from "../types";
+import { StatusBadge } from "./LayersPanel";
+
+interface Props {
+  open: boolean;
+  selected: string | null;
+  version: number; // changes when the workspace changes, so the detail is reloaded
+  onRef: (ref: string) => void;
+  onOpenScript: (path: string) => void;
+}
+
+/** A script under the project's analysis/ folder, as the code panel names it. */
+function analysisPath(path: unknown): string | null {
+  const text = String(path ?? "");
+  const at = text.lastIndexOf("/analysis/");
+  return at >= 0 ? text.slice(at + 1) : null;
+}
+
+export function LineagePanel({ open, selected, version, onRef, onOpenScript }: Props) {
+  const [detail, setDetail] = useState<LayerDetail | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    if (!selected) {
+      setDetail(null);
+      return;
+    }
+    let live = true;
+    api.layer(selected).then((d) => live && setDetail(d), () => live && setDetail(null));
+    return () => {
+      live = false;
+    };
+  }, [selected, version, reload]);
+
+  async function check() {
+    if (!selected) return;
+    setChecking(true);
+    try {
+      await api.validate(selected);
+      setReload((n) => n + 1);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  const script = analysisPath(detail?.lineage.provenance?.call.arguments?.path);
+  return (
+    <div className={`panel${open ? " open" : ""}`} role="tabpanel" aria-label="Lineage">
+      {!detail ? (
+        <p className="placeholder">Select a layer to see its checks and how it was made.</p>
+      ) : (
+        <div className="lineage">
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <h3>{detail.layer.name}</h3>
+            <span className="ref">
+              {detail.layer.data_ref} · {detail.layer.crs ?? "no CRS"}
+            </span>
+          </div>
+
+          <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span className="label">Checks</span>
+              <button type="button" className="secondary" disabled={checking} onClick={() => void check()}>
+                {checking ? <span className="spinner" /> : <Icon name="shield" size={14} />}
+                {detail.validation ? "Check again" : "Run checks"}
+              </button>
+            </div>
+            {detail.validation ? (
+              <ul className="checks">
+                {detail.validation.checks.map((c, i) => (
+                  <li key={`${c.check}-${i}`}>
+                    <div className="top">
+                      <StatusBadge status={c.status} />
+                      <span className="id">{c.check}</span>
+                    </div>
+                    <span className="message">{c.message}</span>
+                    {c.hint && c.status !== "pass" && <span className="hint">{c.hint}</span>}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span style={{ color: "var(--muted)", fontSize: 12 }}>Not checked yet.</span>
+            )}
+          </section>
+
+          <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <span className="label">How it was made, newest first</span>
+            <ol className="timeline">
+              {detail.lineage.steps.map((step, i) => (
+                <li key={`${step.data_ref}-${i}`}>
+                  <span className="rail-line" aria-hidden="true">
+                    <span className="dot" />
+                    <span className="line" />
+                  </span>
+                  <div className="body">
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <strong style={{ fontWeight: 500 }}>{step.produced_by ?? "registered"}</strong>
+                      {step.data_ref && (
+                        <button type="button" className="ref-link" onClick={() => onRef(step.data_ref as string)}>
+                          {step.data_ref}
+                        </button>
+                      )}
+                      {step.validation && <StatusBadge status={step.validation} />}
+                    </span>
+                    <span className="what">{step.description}</span>
+                    {i === 0 && script && (
+                      <button type="button" className="secondary" style={{ alignSelf: "flex-start" }} onClick={() => onOpenScript(script)}>
+                        <Icon name="file" size={14} /> Open {script}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+
+          {(detail.lineage.original_sources.length > 0 || detail.lineage.stac_item_count > 0) && (
+            <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <span className="label">Original sources</span>
+              <ul className="sources">
+                {detail.lineage.original_sources.map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+                {detail.lineage.stac_items.map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+                {detail.lineage.stac_item_count > detail.lineage.stac_items.length && (
+                  <li>and {detail.lineage.stac_item_count - detail.lineage.stac_items.length} more items</li>
+                )}
+              </ul>
+            </section>
+          )}
+          {[...detail.lineage.warnings, ...detail.lineage.notes].map((w) => (
+            <span key={w} style={{ fontSize: 12, color: "var(--warn)" }}>{w}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

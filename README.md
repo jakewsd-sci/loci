@@ -18,7 +18,7 @@ uv sync            # create .venv with the package and dev tools
 uv run pytest      # run the test suite
 ```
 
-The tools are plain Python functions for now. The MCP server arrives in M5.
+The tools are plain Python functions, also served over MCP (below).
 
 ```python
 from loci.workspace import Workspace
@@ -79,6 +79,21 @@ failed validation stop Claude until it is dealt with, or to turn the hook off, s
 ```json
 { "env": { "LOCI_VALIDATION_HOOK": "block" } }
 ```
+
+## Run the app
+
+The map interface is a local web app over the same workspace: a map to explore every layer, an
+agent to ask (Opus, Sonnet or Haiku), the scripts it runs, and each layer's lineage and checks.
+It needs [Node 22](https://nodejs.org/) once to build, and the `claude` CLI for the agent.
+
+```sh
+cd app && npm install && npm run build && cd ..
+uv run loci-app            # then open http://127.0.0.1:8765
+```
+
+`--workspace` picks another workspace and `--project` the folder whose `analysis/` holds the
+scripts. For work on the app itself, run `npm run dev` in `app/` next to `loci-app`, and open the
+address Vite prints.
 
 ## Benchmark
 

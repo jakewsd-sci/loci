@@ -789,3 +789,43 @@ a task needs flow routing, xarray-spatial once it supports numpy 2.5.
 
 **Alternatives.** Downgrading numpy for xarray-spatial: it changes the core numeric library for
 one function. Adding pysheds now: a heavy dependency that nothing yet uses.
+
+## D-043 The map interface is our own local web app (Phase 2 MVP, 2026-10-23)
+
+**Context.** Phase 2 is a map-first IDE in the style of Cursor: an agent the scientist talks to,
+a map to zoom and explore, the code it runs, and a choice of model. The user asked for a slick,
+modern, minimal design and agreed to the dependencies below.
+
+**Choice.** `loci-app` serves a React web app and an HTTP API over the same workspace and tools.
+- **API in `loci.web`.** It uses Starlette and uvicorn, which mcp already brings. It reads the
+  workspace and calls the tools, and never changes the engine: `tools/` and `models.py` are
+  unchanged. New layers reach the browser through server-sent events, driven by a fingerprint of
+  the workspace, so layers made by the agent, a run or Claude Code all appear.
+- **Drawing.** Rasters from files are served as map tiles by rio-tiler, in physical units
+  (`unscale=True`) and stretched to the 2nd–98th percentiles of its preview. NaN pixels are
+  transparent even when the file declares no nodata. STAC stacks and rasters with a time
+  dimension are drawn as one georeferenced preview picture, and the app says so. Vectors are
+  sent as GeoJSON in WGS84. Reprojection for display happens only on the server and changes no
+  data_ref.
+- **Basemap.** OpenFreeMap's dark style: OpenStreetMap data, no API key. Labels sit above the
+  data layers. CARTO's free tiles now need a key.
+- **Agent.** The Claude Agent SDK runs Claude Code with only loci's MCP server (`tools=[]`,
+  `strict_mcp_config`, `setting_sources=[]`). The validation hook runs in process, so each check
+  reaches the chat as its own event. The model (Opus, Sonnet or Haiku) is chosen per message.
+  Each message carries the map's layers and the user's selection, because no tool lists the
+  workspace.
+- **Code.** Scripts live as plain `.py` files under the project's `analysis/` folder, edited in
+  Monaco and executed with `run`. The app finds the names a script reads with `script.read("…")`
+  and asks for a layer for each, so every run declares its inputs.
+- **Frontend.** React, TypeScript, Vite, MapLibre GL and Monaco, built into `app/dist`. Versions
+  are pinned exactly.
+
+**Alternatives.**
+- A Jupyter or QGIS plugin: familiar tools, but they cannot give the agent-first layout or the
+  design.
+- A VS Code extension: brings the editor, but the map would be a webview inside an IDE built for
+  code.
+- A desktop app (Tauri or Electron): could come later around the same web app.
+- A tile server such as TiTiler: it brings more than an MVP needs. rio-tiler is the library
+  inside it.
+- Mapbox GL or Google Maps: they need keys. MapLibre is the open fork.
