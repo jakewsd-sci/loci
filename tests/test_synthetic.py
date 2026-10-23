@@ -5,6 +5,7 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyproj
 import pytest
 import rasterio
 import shapely
@@ -133,3 +134,65 @@ def test_grid_variants_match_known_answers(coarse_tif: Path, shifted_tif: Path) 
         assert coarse.res == (syn.COARSE_RES, syn.COARSE_RES)
         assert coarse.bounds.right == syn.ORIGIN[0] + syn.RAMP_COLS * syn.RAMP_RES
         assert shifted.bounds.left == syn.ORIGIN[0] + syn.SHIFT_X
+
+
+def test_cloudy_stac_scenes_cover_their_top_rows(tmp_path: Path) -> None:
+    items = syn.stac_items(tmp_path, red=(1500, 1600, 1700), cloud_rows=(12, 0, 24))
+
+    with rasterio.open(items[2].assets["red"].href) as src:
+        red = src.read(1)
+    with rasterio.open(items[2].assets["scl"].href) as src:
+        scl = src.read(1)
+
+    assert (red[:24] == syn.CLOUD_DN).all() and (red[24:] == 1700).all()
+    assert (scl[:12] == syn.SCL_CLOUD).all() and (scl[12:] == syn.SCL_CLEAR).all()
+    with pytest.raises(ValueError, match="even"):
+        syn.stac_items(tmp_path / "odd", cloud_rows=(3, 0, 0))
+
+
+def test_catchment_dem_means_survive_its_nodata(tmp_path: Path) -> None:
+    with rasterio.open(syn.write_catchment_dem(tmp_path / "dem.tif")) as src:
+        values = np.ma.masked_equal(src.read(1), syn.DEM_NODATA)
+    half = syn.DEM_SIZE // 2
+    catchments = gpd.read_file(syn.write_catchments(tmp_path / "catchments.geojson"))
+
+    assert values[:, :half].mean() == syn.DEM_WEST_MEAN
+    assert values[:, half:].mean() == syn.DEM_EAST_MEAN
+    assert values.mask.sum() == syn.DEM_NODATA_ROWS * half
+    assert catchments.crs.to_epsg() == 4326
+    assert catchments.to_crs(syn.UTM33N).area.round(3).tolist() == [syn.CATCHMENT_AREA] * 2
+
+
+def test_sample_sites_hit_known_ndvi_pixels(tmp_path: Path, ndvi_tif: Path) -> None:
+    sites = pd.read_csv(syn.write_sample_sites_csv(tmp_path / "sites.csv"))
+    with rasterio.open(ndvi_tif) as src:
+        inside = [
+            (x, y)
+            for x, y in zip(sites["easting"], sites["northing"], strict=True)
+            if src.bounds.left < x < src.bounds.right and src.bounds.bottom < y < src.bounds.top
+        ]
+        values = [v[0] for v in src.sample(inside)]
+
+    assert len(sites) - len(inside) == syn.SAMPLE_OUTSIDE
+    assert np.mean(values) == pytest.approx(syn.SAMPLE_NDVI_MEAN, abs=1e-6)
+
+
+def test_two_slope_dem_is_60_percent_steep_in_metres_and_all_steep_in_degrees(
+    tmp_path: Path,
+) -> None:
+    with rasterio.open(syn.write_two_slope_dem(tmp_path / "terrain.tif")) as src:
+        heights = src.read(1).astype("float64")
+        assert src.crs.to_epsg() == 4326
+    middle = syn.SLOPE_ORIGIN[1] - syn.SLOPE_SIZE * syn.SLOPE_RES_DEG / 2
+    geod = pyproj.Geod(ellps="WGS84")
+    lon0 = syn.SLOPE_ORIGIN[0]
+    dx = geod.line_length([lon0, lon0 + syn.SLOPE_RES_DEG], [middle, middle])
+    dy = geod.line_length([lon0, lon0], [middle, middle + syn.SLOPE_RES_DEG])
+
+    def steep_percent(dy: float, dx: float) -> float:
+        rise_y, rise_x = np.gradient(heights, dy, dx)
+        slope = np.degrees(np.arctan(np.hypot(rise_x, rise_y)))
+        return float((slope > 15).mean() * 100)
+
+    assert steep_percent(dy, dx) == syn.SLOPE_STEEP_PERCENT
+    assert steep_percent(syn.SLOPE_RES_DEG, syn.SLOPE_RES_DEG) == 100.0  # degrees as metres

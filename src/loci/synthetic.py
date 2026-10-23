@@ -16,7 +16,7 @@ import pystac
 import rasterio
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
-from pyproj import Transformer
+from pyproj import Geod, Transformer
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 from shapely.geometry import Polygon, box, mapping
@@ -82,6 +82,10 @@ STAC_RES = 10.0
 STAC_RED = (1000, 1100, 1200)
 STAC_NIR = 3000
 STAC_SCALE, STAC_OFFSET = 0.0001, -0.1
+# Cloud on a STAC scene covers its top rows: red and nir are bright there (CLOUD_DN), and the 20 m
+# scene classification says cloud (SCL_CLOUD). Elsewhere it says vegetation (SCL_CLEAR).
+SCL_CLEAR, SCL_CLOUD = 4, 9
+CLOUD_DN = 4000
 STAC_EXTENSIONS = [
     "https://stac-extensions.github.io/projection/v1.1.0/schema.json",
     "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
@@ -105,6 +109,31 @@ POLY_CATCHMENT = ["west", "east", "west", "east"]
 
 # Dirty polygons: valid, self-intersecting bowtie, empty, null (in that row order).
 DIRTY_INVALID_ROW = 1
+
+# Catchment DEM: 20 x 20 pixels of 10 m under the two catchments; elevation rises 5 m per column
+# from 100 m. The top two rows of the east catchment are nodata, which leaves both means intact.
+DEM_SIZE = 20
+DEM_BASE, DEM_STEP = 100.0, 5.0
+DEM_NODATA = -9999.0
+DEM_NODATA_ROWS = 2
+DEM_WEST_MEAN, DEM_EAST_MEAN = 122.5, 172.5
+
+# Sample sites over the NDVI raster: eight at pixel centres of the columns below (mean NDVI exactly
+# 0.3) and two east of the raster. Easting/northing in UTM 33N; the CSV does not state the CRS.
+SAMPLE_COLUMNS = (0, 7, 14, 21, 28, 35, 42, 49)
+SAMPLE_OUTSIDE = 2
+SAMPLE_NDVI_MEAN = 0.3
+
+# Terrain in degrees: 100 x 100 pixels of 0.0001 degrees (about 9 m east-west and 11 m north-south)
+# from 15 E, 37.01 N. Heights rise eastwards at 10 degrees across the west 40 columns and at 20
+# degrees across the east 60, so 60% of the area is steeper than 15 degrees.
+SLOPE_SIZE = 100
+SLOPE_RES_DEG = 0.0001
+SLOPE_ORIGIN = (15.0, 37.01)
+SLOPE_BREAK_COLUMN = 40
+SLOPE_GENTLE_DEG, SLOPE_STEEP_DEG = 10.0, 20.0
+SLOPE_BASE = 200.0
+SLOPE_STEEP_PERCENT = 60.0
 
 # Point tables.
 POINTS_LONLAT_COUNT = 20
@@ -315,6 +344,47 @@ def write_polygons(path: Path) -> Path:
     return path
 
 
+def write_catchments(path: Path) -> Path:
+    """Write the catchments; as with write_polygons, GeoJSON is written in WGS 84."""
+    gdf = catchments()
+    (gdf.to_crs("EPSG:4326") if path.suffix.lower() == ".geojson" else gdf).to_file(path)
+    return path
+
+
+def write_catchment_dem(path: Path) -> Path:
+    """float32 elevation under the catchments: DEM_BASE + DEM_STEP * column, some nodata."""
+    values = np.tile(DEM_BASE + DEM_STEP * np.arange(DEM_SIZE), (DEM_SIZE, 1)).astype("float32")
+    values[:DEM_NODATA_ROWS, DEM_SIZE // 2 :] = DEM_NODATA
+    return _write_geotiff(
+        path, values[None], crs=UTM33N, res=10.0, nodata=DEM_NODATA, descriptions=["elevation"]
+    )
+
+
+def write_two_slope_dem(path: Path) -> Path:
+    """float32 heights in metres on a grid in degrees (EPSG:4326): two planes rising eastwards."""
+    lon0, lat0 = SLOPE_ORIGIN
+    latitudes = lat0 - (np.arange(SLOPE_SIZE) + 0.5) * SLOPE_RES_DEG
+    geod = Geod(ellps="WGS84")
+    # Metres per degree of longitude along each row, from a short geodesic.
+    per_degree = np.array([geod.line_length([lon0, lon0 + 0.001], [lat, lat]) for lat in latitudes])
+    per_degree *= 1000
+    east = np.outer(per_degree, (np.arange(SLOPE_SIZE) + 0.5) * SLOPE_RES_DEG)  # metres from edge
+    break_at = per_degree[:, None] * SLOPE_BREAK_COLUMN * SLOPE_RES_DEG
+    gentle, steep = np.tan(np.radians([SLOPE_GENTLE_DEG, SLOPE_STEEP_DEG]))
+    heights = SLOPE_BASE + np.where(
+        east < break_at, gentle * east, gentle * break_at + steep * (east - break_at)
+    )
+    return _write_geotiff(
+        path,
+        heights.astype("float32")[None],
+        crs="EPSG:4326",
+        res=SLOPE_RES_DEG,
+        nodata=None,
+        descriptions=["elevation"],
+        origin=SLOPE_ORIGIN,
+    )
+
+
 def write_dirty_polygons(path: Path) -> Path:
     """Four rows: a valid square, a self-intersecting bowtie, an empty polygon and a null."""
     x0, y0 = ORIGIN
@@ -352,6 +422,23 @@ def write_points_xy_csv(path: Path) -> Path:
     return path
 
 
+def write_sample_sites_csv(path: Path) -> Path:
+    """Ten sites with easting/northing in UTM 33N: eight on NDVI pixel centres, two east of it."""
+    x0, y0 = ORIGIN
+    inside = [(x0 + (c + 0.5) * 10, y0 - (5 * k + 3.5) * 10) for k, c in enumerate(SAMPLE_COLUMNS)]
+    beyond = x0 + NDVI_SIZE * 10.0
+    outside = [(beyond + 55.0, y0 - 105.0), (beyond + 155.0, y0 - 255.0)][:SAMPLE_OUTSIDE]
+    sites = inside + outside
+    pd.DataFrame(
+        {
+            "site": [f"P{k:02d}" for k in range(1, len(sites) + 1)],
+            "easting": [x for x, _ in sites],
+            "northing": [y for _, y in sites],
+        }
+    ).to_csv(path, index=False)
+    return path
+
+
 def write_points_blank_csv(path: Path) -> Path:
     """Five lon/lat rows, two of which have a missing or non-numeric coordinate."""
     path.write_text(
@@ -382,25 +469,37 @@ def stac_items(
     *,
     offsets: Iterable[float] | None = None,
     properties: dict[str, object] | None = None,
+    red: Iterable[int] = STAC_RED,
+    cloud_rows: Iterable[int] | None = None,
 ) -> list[pystac.Item]:
     """Three synthetic Sentinel-2-like scenes as STAC items whose assets are local GeoTIFFs.
 
     Items carry the projection, raster and eo extension fields odc-stac reads. `offsets` overrides
     each item's offset, e.g. to imitate a change of processing baseline between scenes;
-    `properties` are added to every item.
+    `properties` are added to every item. `red` sets each scene's red value, and `cloud_rows`
+    covers the top rows of each scene with cloud (an even number, so whole 20 m SCL pixels).
     """
     directory.mkdir(parents=True, exist_ok=True)
     offsets = list(offsets) if offsets is not None else [STAC_OFFSET] * len(STAC_DATES)
+    cloud_rows = list(cloud_rows) if cloud_rows is not None else [0] * len(STAC_DATES)
+    if any(rows % 2 for rows in cloud_rows):
+        raise ValueError(f"cloud_rows must be even, to cover whole 20 m SCL pixels: {cloud_rows}")
     x0, y0 = ORIGIN
     extent = STAC_SIZE * STAC_RES
     to_lonlat = Transformer.from_crs(UTM33N, "EPSG:4326", always_xy=True)
     west, south, east, north = to_lonlat.transform_bounds(x0, y0 - extent, x0 + extent, y0)
     items = []
-    for date, cloud, red, offset in zip(STAC_DATES, STAC_CLOUD, STAC_RED, offsets, strict=True):
+    scenes = zip(STAC_DATES, STAC_CLOUD, red, offsets, cloud_rows, strict=True)
+    for date, cloud, red_value, offset, rows in scenes:
+        red_band = np.full((STAC_SIZE, STAC_SIZE), red_value, dtype="uint16")
+        nir_band = np.full((STAC_SIZE, STAC_SIZE), STAC_NIR, dtype="uint16")
+        scl_band = np.full((STAC_SIZE // 2, STAC_SIZE // 2), SCL_CLEAR, dtype="uint8")
+        red_band[:rows] = nir_band[:rows] = CLOUD_DN
+        scl_band[: rows // 2] = SCL_CLOUD
         bands = {
-            "red": (np.full((STAC_SIZE, STAC_SIZE), red, dtype="uint16"), STAC_RES),
-            "nir": (np.full((STAC_SIZE, STAC_SIZE), STAC_NIR, dtype="uint16"), STAC_RES),
-            "scl": (np.full((STAC_SIZE // 2, STAC_SIZE // 2), 4, dtype="uint8"), 2 * STAC_RES),
+            "red": (red_band, STAC_RES),
+            "nir": (nir_band, STAC_RES),
+            "scl": (scl_band, 2 * STAC_RES),
         }
         item = pystac.Item(
             id=f"SYN_{date.replace('-', '')}",
