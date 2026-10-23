@@ -3,6 +3,12 @@ from pathlib import Path
 import pytest
 
 from loci import synthetic
+from loci.workspace import Workspace
+
+
+@pytest.fixture
+def ws(tmp_path: Path) -> Workspace:
+    return Workspace(tmp_path / ".loci")
 
 
 @pytest.fixture(scope="session")

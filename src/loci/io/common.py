@@ -11,6 +11,9 @@ from pyproj.exceptions import CRSError
 from loci.errors import LoadError
 from loci.models import CrsSource, Kind, ReadOptions
 
+# A loaded dataset: rasters are xarray Datasets, vectors (points included) GeoDataFrames.
+type Data = xr.Dataset | gpd.GeoDataFrame
+
 
 @dataclass
 class ReadResult:
@@ -20,7 +23,7 @@ class ReadResult:
     back to the reader reopens the same data without repeating any detection.
     """
 
-    data: xr.Dataset | gpd.GeoDataFrame
+    data: Data
     kind: Kind
     format: str
     options: ReadOptions

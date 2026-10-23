@@ -5,14 +5,14 @@ from its stored options, so both paths behave identically.
 """
 
 from loci.errors import LoadError
-from loci.io.common import ReadResult
-from loci.io.formats import TABLE_FORMATS, Format, detect_format
+from loci.io.common import Data, ReadResult
+from loci.io.formats import TABLE_FORMATS, Format, detect_format, is_remote
 from loci.io.raster import open_raster
 from loci.io.table import read_points_table
 from loci.io.vector import read_vector
 from loci.models import ReadOptions
 
-__all__ = ["Format", "ReadResult", "detect_format", "read"]
+__all__ = ["Data", "Format", "ReadResult", "detect_format", "is_remote", "read"]
 
 
 def read(uri: str, fmt: Format, options: ReadOptions) -> ReadResult:
