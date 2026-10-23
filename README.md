@@ -26,10 +26,10 @@ from loci.tools.load import load
 from loci.tools.inspect import inspect
 
 ws = Workspace(".loci")
-dem = load(ws, "data/dem.tif")             # data_ref plus a header summary; no pixels read
+dem = load(ws, "data/dem.tif")  # data_ref plus a header summary; no pixels read
 print(inspect(ws, dem.data_ref).model_dump_json(indent=2))  # adds bounded per-band statistics
 
-samples = load(ws, "data/samples.csv")     # lon/lat columns detected; any assumption is a warning
+samples = load(ws, "data/samples.csv")  # lon/lat columns detected; any assumption is a warning
 print(samples.warnings)
 ```
 
