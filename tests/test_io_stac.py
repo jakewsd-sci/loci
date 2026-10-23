@@ -150,3 +150,14 @@ def test_stac_values_are_physical_after_scaling(items_file: str) -> None:
     assert np.allclose(
         physical[:, 0, 0], [r * syn.STAC_SCALE + syn.STAC_OFFSET for r in syn.STAC_RED]
     )
+
+
+def test_offset_applied_flag_conflicting_with_declared_offset_warns(tmp_path: Path) -> None:
+    items = syn.stac_items(tmp_path / "scenes", properties={"earthsearch:boa_offset_applied": True})
+    save_items(items, tmp_path / "items.json", {})
+
+    result = read(str(tmp_path / "items.json"), STAC_RASTER, ReadOptions(bands=["red"]))
+
+    assert result.data["red"].attrs["add_offset"] == syn.STAC_OFFSET  # metadata kept as declared
+    assert "3 of 3 items are marked earthsearch:boa_offset_applied = true" in result.warnings[0]
+    assert "counted twice" in result.warnings[0]

@@ -377,11 +377,17 @@ def write_wide_csv(path: Path) -> Path:
     return path
 
 
-def stac_items(directory: Path, *, offsets: Iterable[float] | None = None) -> list[pystac.Item]:
+def stac_items(
+    directory: Path,
+    *,
+    offsets: Iterable[float] | None = None,
+    properties: dict[str, object] | None = None,
+) -> list[pystac.Item]:
     """Three synthetic Sentinel-2-like scenes as STAC items whose assets are local GeoTIFFs.
 
     Items carry the projection, raster and eo extension fields odc-stac reads. `offsets` overrides
-    each item's offset, e.g. to imitate a change of processing baseline between scenes.
+    each item's offset, e.g. to imitate a change of processing baseline between scenes;
+    `properties` are added to every item.
     """
     directory.mkdir(parents=True, exist_ok=True)
     offsets = list(offsets) if offsets is not None else [STAC_OFFSET] * len(STAC_DATES)
@@ -401,7 +407,12 @@ def stac_items(directory: Path, *, offsets: Iterable[float] | None = None) -> li
             geometry=mapping(box(west, south, east, north)),
             bbox=[west, south, east, north],
             datetime=datetime.fromisoformat(date).replace(hour=10, tzinfo=UTC),
-            properties={"eo:cloud_cover": cloud, "proj:epsg": 32633, "platform": "synthetic"},
+            properties={
+                "eo:cloud_cover": cloud,
+                "proj:epsg": 32633,
+                "platform": "synthetic",
+                **(properties or {}),
+            },
             stac_extensions=STAC_EXTENSIONS,
         )
         for name, (values, res) in bands.items():

@@ -66,9 +66,15 @@ def check_value_range(
     *,
     inferred: bool,
     method: str = "every value",
+    applied: str | None = None,
 ) -> CheckResult:
-    """Compare the extremes of a band or column with the variable's range."""
+    """Compare the extremes of a band or column with the variable's range.
+
+    `applied` describes any conversion from stored values, e.g. "stored * 0.0001 - 0.1".
+    """
     where = f"{'band' if layer.raster is not None else 'column'} '{target}'"
+    if applied:
+        where += f" ({applied})"
     bounds = f"[{_num(variable.low)}, {_num(variable.high)}]"
     inferred_note = "variable inferred from the name"
     details = {
@@ -79,6 +85,7 @@ def check_value_range(
         "max": sig(high),
         "inferred": inferred,
         "method": method,
+        "applied": applied,
     }
     if low is None or high is None:
         return result(
@@ -127,7 +134,15 @@ def check_band_range(layer: Layer, band: str, variable: Variable, *, inferred: b
         physical = values[valid].astype("float64") * scale + offset
         low, high = float(physical.min()), float(physical.max())
     method = "every pixel" if source.method == "exact" else f"{source.method} 1/{source.decimation}"
-    return check_value_range(layer, band, variable, low, high, inferred=inferred, method=method)
+    scale = float(da.attrs.get("scale_factor", 1.0))
+    offset = float(da.attrs.get("add_offset", 0.0))
+    applied = None
+    if (scale, offset) != (1.0, 0.0):
+        sign = "-" if offset < 0 else "+"
+        applied = f"stored * {scale:g} {sign} {abs(offset):g}"
+    return check_value_range(
+        layer, band, variable, low, high, inferred=inferred, method=method, applied=applied
+    )
 
 
 def check_column_range(

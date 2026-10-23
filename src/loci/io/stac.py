@@ -174,7 +174,7 @@ def load_stac(uri: str, fmt: str, options: ReadOptions) -> ReadResult:
     except (ValueError, rasterio.errors.RasterioError, OSError) as e:
         raise LoadError(f"Cannot load the STAC items: {e}") from e
 
-    warnings = _apply_scaling(ds, items, bands)
+    warnings = _apply_scaling(ds, items, bands) + _offset_conflicts(items, bands)
     notes = []
     resampled = {b: r for b, r in native.items() if r != resolution}
     if resampled and not reprojected:
@@ -279,6 +279,21 @@ def _apply_scaling(ds: Any, items: Sequence[pystac.Item], bands: list[str]) -> l
         if offset != 0.0:
             ds[band].attrs["add_offset"] = offset
     return warnings
+
+
+def _offset_conflicts(items: Sequence[pystac.Item], bands: list[str]) -> list[str]:
+    """Warn when Earth Search says an offset was applied to pixels that still declare one."""
+    flagged = [i for i in items if i.properties.get("earthsearch:boa_offset_applied") is True]
+    offset_bands = sorted({b for i in flagged for b in bands if _scale_offset(i, b)[1] != 0})
+    if not offset_bands:
+        return []
+    return [
+        f"{len(flagged)} of {len(items)} items are marked earthsearch:boa_offset_applied = "
+        f"true, which says the offset was already applied to their stored values, yet they "
+        f"still declare an offset for {offset_bands}. If both hold, the offset is counted twice; "
+        "check physical values before trusting them (validate with "
+        "variables={band: 'reflectance'})."
+    ]
 
 
 def _scale_offset(item: pystac.Item, band: str) -> tuple[float, float]:

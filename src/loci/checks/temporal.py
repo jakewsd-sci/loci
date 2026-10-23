@@ -47,8 +47,10 @@ def check_temporal_coverage(layer: Layer, times: Any) -> CheckResult:
     gap_steps = np.flatnonzero(days > GAP_FACTOR * median)
     short = int((days < SHORT_FACTOR * median).sum())
     largest_first = sorted(gap_steps, key=lambda i: -days[i])
+    # Dates read better than timestamps once steps are a day or more apart.
+    stamp = iso if median < 1 else (lambda t: pd.Timestamp(t).date().isoformat())
     gaps = [
-        {"from": iso(unique[i]), "to": iso(unique[i + 1]), "days": sig(days[i])}
+        {"from": stamp(unique[i]), "to": stamp(unique[i + 1]), "days": sig(days[i])}
         for i in largest_first[:MAX_GAPS_LISTED]
     ]
     details = {
@@ -66,8 +68,8 @@ def check_temporal_coverage(layer: Layer, times: Any) -> CheckResult:
         top = gaps[0]
         findings.append(
             f"{counted(len(gap_steps), 'gap', 'gaps')} longer than {GAP_FACTOR:g}x the median "
-            f"step of {sig(median):g} days (largest: {top['from']} to {top['to']}, "
-            f"{top['days']:g} days)."
+            f"step of {median:.3g} days (largest: {top['from']} to {top['to']}, "
+            f"{days[largest_first[0]]:.3g} days)."
         )
     if short:
         findings.append(f"{counted(short, 'step is', 'steps are')} under half the median step.")
@@ -87,7 +89,7 @@ def check_temporal_coverage(layer: Layer, times: Any) -> CheckResult:
         "temporal_coverage",
         "pass",
         [layer],
-        f"{len(unique)} time steps from {iso(unique[0])} to {iso(unique[-1])}, evenly spaced "
-        f"(median step {sig(median):g} days).",
+        f"{len(unique)} time steps from {stamp(unique[0])} to {stamp(unique[-1])}, evenly "
+        f"spaced (median step {median:.3g} days).",
         details=details,
     )

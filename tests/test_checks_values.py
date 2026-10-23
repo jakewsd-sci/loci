@@ -69,6 +69,7 @@ def test_band_range_uses_scale_and_offset() -> None:
 
     assert scaled.status == "pass"
     assert scaled.details["max"] == 0.1  # 2000 * 0.0001 - 0.1
+    assert "band 'red' (stored * 0.0001 - 0.1) span" in scaled.message
     assert raw.status == "warn"  # reflectance is a plausibility range, so outside only warns
     assert "reach 2000" in raw.message
 
