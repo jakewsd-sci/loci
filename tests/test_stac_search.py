@@ -189,3 +189,26 @@ def test_only_search_results_can_be_loaded_by_data_ref(ws: Workspace, ramp_tif: 
 
     with pytest.raises(LoadError, match="not a stac_search result"):
         load(ws, ref, bands=["red"])
+
+
+def test_drop_offset_is_recorded_and_checked(
+    ws: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    items = syn.stac_items(
+        tmp_path / "flagged", properties={"earthsearch:boa_offset_applied": True}
+    )
+    monkeypatch.setattr("loci.tools.stac_search.search_items", FakeCatalogue(items))
+    ref = stac_search(ws, bbox=AREA, start="2024-03-01", end="2024-03-31").data_ref
+
+    kept = load(ws, ref, bands=["red"])
+    dropped = load(ws, ref, bands=["red"], drop_offset=True)
+    report = validate(ws, [dropped.data_ref], variables={"red": "reflectance"})
+    value_range = next(c for c in report.checks if c.check == "value_range")
+
+    assert any("counted twice" in w for w in kept.warnings)
+    assert isinstance(dropped.summary, RasterSummary)
+    assert dropped.summary.bands[0].offset is None
+    assert Workspace(ws.root).record(dropped.data_ref).source.options.drop_offset is True
+    assert any("not applied" in n for n in inspect(Workspace(ws.root), dropped.data_ref).notes)
+    assert value_range.details["applied"] == "stored * 0.0001"
+    assert value_range.details["max"] == pytest.approx(max(syn.STAC_RED) * syn.STAC_SCALE)

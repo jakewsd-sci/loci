@@ -28,6 +28,7 @@ from loci.models import Bounds, CrsSource, ReadOptions
 
 EARTH_SEARCH = "https://earth-search.aws.element84.com/v1"
 SEARCH_KEY = "loci:search"
+BOA_APPLIED = "earthsearch:boa_offset_applied"
 GROUPBY = "solar_day"
 CHUNKS: dict[str, int | Literal["auto"]] = {"x": 2048, "y": 2048}
 RESAMPLING = ("nearest", "bilinear", "cubic", "average", "mode", "min", "max", "median")
@@ -141,7 +142,9 @@ def load_stac(uri: str, fmt: str, options: ReadOptions) -> ReadResult:
 
     Nothing is resampled or reprojected unless the options ask for it: mixed native resolutions
     or mixed CRSs are errors until resolution= or output_crs= is chosen, and any resampling or
-    reprojection is noted. Scale and offset are attached to bands when every item agrees.
+    reprojection is noted. Scale and offset are attached to bands when every item agrees;
+    drop_offset leaves declared offsets out, with a note, and a warning for items that do not say
+    their offset was already applied.
     """
     items, search = read_items(uri)
     if not items:
@@ -174,8 +177,9 @@ def load_stac(uri: str, fmt: str, options: ReadOptions) -> ReadResult:
     except (ValueError, rasterio.errors.RasterioError, OSError) as e:
         raise LoadError(f"Cannot load the STAC items: {e}") from e
 
-    warnings = _apply_scaling(ds, items, bands) + _offset_conflicts(items, bands)
-    notes = []
+    drop_offset = bool(options.drop_offset)
+    offset_warnings, notes = _offset_checks(items, bands, drop_offset)
+    warnings = _apply_scaling(ds, items, bands, drop_offset=drop_offset) + offset_warnings
     resampled = {b: r for b, r in native.items() if r != resolution}
     if resampled and not reprojected:
         listing = ", ".join(f"{b} {r:g}" for b, r in resampled.items())
@@ -260,11 +264,19 @@ def _resolution(requested: float | None, native: dict[str, float], reprojected: 
     return resolutions.pop()
 
 
-def _apply_scaling(ds: Any, items: Sequence[pystac.Item], bands: list[str]) -> list[str]:
-    """Attach scale_factor/add_offset when all items agree; otherwise warn and leave raw."""
+def _apply_scaling(
+    ds: Any, items: Sequence[pystac.Item], bands: list[str], *, drop_offset: bool = False
+) -> list[str]:
+    """Attach scale_factor/add_offset when all items agree; otherwise warn and leave raw.
+
+    With drop_offset, declared offsets are ignored and only the scale is attached.
+    """
     warnings = []
     for band in bands:
-        pairs = {_scale_offset(item, band) for item in items}
+        pairs = {
+            (scale, 0.0 if drop_offset else offset)
+            for scale, offset in (_scale_offset(item, band) for item in items)
+        }
         if len(pairs) > 1:
             listing = ", ".join(f"{s:g}/{o:g}" for s, o in sorted(pairs))
             warnings.append(
@@ -281,19 +293,46 @@ def _apply_scaling(ds: Any, items: Sequence[pystac.Item], bands: list[str]) -> l
     return warnings
 
 
-def _offset_conflicts(items: Sequence[pystac.Item], bands: list[str]) -> list[str]:
-    """Warn when Earth Search says an offset was applied to pixels that still declare one."""
-    flagged = [i for i in items if i.properties.get("earthsearch:boa_offset_applied") is True]
-    offset_bands = sorted({b for i in flagged for b in bands if _scale_offset(i, b)[1] != 0})
-    if not offset_bands:
-        return []
+def _offset_checks(
+    items: Sequence[pystac.Item], bands: list[str], drop_offset: bool
+) -> tuple[list[str], list[str]]:
+    """Warnings and notes about declared offsets.
+
+    Earth Search marks items whose stored values already have the offset applied with
+    earthsearch:boa_offset_applied = true. Applying a declared offset to those counts it twice;
+    dropping it from items without the mark removes a real offset. Both are reported.
+    """
+    applied = [i for i in items if i.properties.get(BOA_APPLIED) is True]
+    with_offset = sorted({b for i in items for b in bands if _scale_offset(i, b)[1] != 0})
+    if not drop_offset:
+        conflicting = sorted({b for i in applied for b in bands if _scale_offset(i, b)[1] != 0})
+        if not conflicting:
+            return [], []
+        return [
+            f"{len(applied)} of {len(items)} items {'is' if len(applied) == 1 else 'are'} "
+            f"marked {BOA_APPLIED} = true, which says "
+            f"the offset was already applied to their stored values, yet they still declare an "
+            f"offset for {conflicting}. If both hold, the offset is counted twice: check physical "
+            "values (validate with variables={band: 'reflectance'}) and reload with "
+            "drop_offset=True if they are too low."
+        ], []
+    if not with_offset:
+        return [], ["drop_offset=True changed nothing: no loaded band declares an offset."]
+    offsets = sorted({_scale_offset(i, b)[1] for i in items for b in with_offset} - {0.0})
+    listing = ", ".join(f"{o:g}" for o in offsets)
+    note = (
+        f"Declared offset {listing} not applied to {with_offset} (drop_offset=True): physical "
+        "value = stored * scale."
+    )
+    unmarked = len(items) - len(applied)
+    if not unmarked:
+        return [], [note]
     return [
-        f"{len(flagged)} of {len(items)} items are marked earthsearch:boa_offset_applied = "
-        f"true, which says the offset was already applied to their stored values, yet they "
-        f"still declare an offset for {offset_bands}. If both hold, the offset is counted twice; "
-        "check physical values before trusting them (validate with "
-        "variables={band: 'reflectance'})."
-    ]
+        f"drop_offset=True, but {unmarked} of {len(items)} items "
+        f"{'is' if unmarked == 1 else 'are'} not marked {BOA_APPLIED} = true, so their stored "
+        "values may still need the offset and are now too high by it. "
+        "Check them, or load them separately without drop_offset."
+    ], [note]
 
 
 def _scale_offset(item: pystac.Item, band: str) -> tuple[float, float]:

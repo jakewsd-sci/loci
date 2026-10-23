@@ -40,8 +40,8 @@ class _Model(BaseModel):
 class ReadOptions(_Model):
     """How a source was read. Stored with each data_ref so any process can reopen it identically.
 
-    layer, x_col, y_col and crs apply to files; bands, resolution, bbox, output_crs and resampling
-    to pixels loaded from STAC items.
+    layer, x_col, y_col and crs apply to files; bands, resolution, bbox, output_crs, resampling
+    and drop_offset to pixels loaded from STAC items.
     """
 
     layer: str | None = None
@@ -53,6 +53,7 @@ class ReadOptions(_Model):
     bbox: Bounds | None = None
     output_crs: str | None = None
     resampling: str | None = None
+    drop_offset: bool | None = None
 
 
 class CRSInfo(_Model):

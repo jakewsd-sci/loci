@@ -16,7 +16,7 @@ from loci.models import ReadOptions
 # Formats created by loci itself rather than detected from a suffix.
 STAC_ITEMS = Format("vector", "stac-items")
 STAC_RASTER = Format("raster", "stac-raster")
-STAC_OPTIONS = ("bands", "resolution", "bbox", "output_crs", "resampling")
+STAC_OPTIONS = ("bands", "resolution", "bbox", "output_crs", "resampling", "drop_offset")
 FILE_OPTIONS = ("layer", "x_col", "y_col", "crs")
 
 __all__ = [

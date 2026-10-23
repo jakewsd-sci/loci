@@ -27,6 +27,7 @@ def load(
     bbox: list[float] | None = None,
     output_crs: str | None = None,
     resampling: str | None = None,
+    drop_offset: bool = False,
 ) -> RefSummary:
     """Read a dataset into the workspace; return its new data_ref and a compact summary.
 
@@ -43,6 +44,9 @@ def load(
         bbox: STAC only. [west, south, east, north] in degrees; defaults to the search area.
         output_crs: STAC only. CRS of the output grid; items in other CRSs are reprojected.
         resampling: STAC only. Method used when resampling or reprojecting (default nearest).
+        drop_offset: STAC only. Leave the items' declared offsets out of physical values, for
+            stored values that already have the offset applied. Recorded and noted; items that
+            do not say so are warned about.
 
     Rasters are opened lazily: the summary describes the grid and bands, not pixel values.
     Vectors are read in full and summarised completely.
@@ -57,6 +61,7 @@ def load(
         bbox=tuple(bbox) if bbox is not None else None,  # type: ignore[arg-type]
         output_crs=output_crs,
         resampling=resampling,
+        drop_offset=True if drop_offset else None,
     )
     if REF_PATTERN.fullmatch(uri):
         return _load_items(ws, uri, options, kind)

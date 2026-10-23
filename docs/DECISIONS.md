@@ -463,3 +463,25 @@ odc-geo's use of a deprecated shapely function, and odc-loader's overview reads,
 dataset opened without its transform. Tests confirm the values those reads return.
 
 **Alternatives.** Keeping both places: twice the network time for no extra coverage.
+
+## D-030 drop_offset: an explicit, recorded way past contradictory offsets (M3, 2026-10-23)
+
+**Context.** D-026 left open what to do about Earth Search scenes whose stored values already have
+the offset applied but still declare one. The user agreed with an explicit option over loci
+deciding on its own.
+
+**Choice.** `load(<search data_ref>, bands=[...], drop_offset=True)` leaves the items' declared
+offsets out, so physical value = stored × scale.
+- The choice is kept in the data_ref's read options, which makes it part of the record, and later
+  of lineage.
+- A note names the offset that was left out.
+- Items not marked `earthsearch:boa_offset_applied = true` raise a warning, because their stored
+  values may still need the offset. Over Sydney in 2024 that flags 1 of 42 scenes.
+- Without the option, the "counted twice" warning now points to it.
+
+A network test checks that over Sydney the declared offset gives negative red reflectance and
+`drop_offset` gives none. Unlike the other network tests, it deliberately tracks this upstream
+quirk, so a fix in Earth Search shows up as a failure.
+
+**Alternatives.** Dropping the offset automatically whenever the flag is set: likely right today,
+but a silent, provider-specific guess. A per-band option: finer, but nothing needs it yet.

@@ -138,8 +138,9 @@ def check_band_range(layer: Layer, band: str, variable: Variable, *, inferred: b
     offset = float(da.attrs.get("add_offset", 0.0))
     applied = None
     if (scale, offset) != (1.0, 0.0):
-        sign = "-" if offset < 0 else "+"
-        applied = f"stored * {scale:g} {sign} {abs(offset):g}"
+        applied = "stored" + (f" * {scale:g}" if scale != 1.0 else "")
+        if offset:
+            applied += f" {'-' if offset < 0 else '+'} {abs(offset):g}"
     return check_value_range(
         layer, band, variable, low, high, inferred=inferred, method=method, applied=applied
     )

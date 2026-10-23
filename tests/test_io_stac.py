@@ -161,3 +161,51 @@ def test_offset_applied_flag_conflicting_with_declared_offset_warns(tmp_path: Pa
     assert result.data["red"].attrs["add_offset"] == syn.STAC_OFFSET  # metadata kept as declared
     assert "3 of 3 items are marked earthsearch:boa_offset_applied = true" in result.warnings[0]
     assert "counted twice" in result.warnings[0]
+
+
+def test_drop_offset_leaves_declared_offsets_out_with_a_note(tmp_path: Path) -> None:
+    items = syn.stac_items(tmp_path / "scenes", properties={"earthsearch:boa_offset_applied": True})
+    save_items(items, tmp_path / "items.json", {})
+
+    result = read(
+        str(tmp_path / "items.json"), STAC_RASTER, ReadOptions(bands=["red"], drop_offset=True)
+    )
+
+    assert "add_offset" not in result.data["red"].attrs
+    assert result.data["red"].attrs["scale_factor"] == syn.STAC_SCALE
+    assert result.options.drop_offset is True
+    assert result.warnings == []  # the conflict is resolved, so no "counted twice"
+    assert result.notes == [
+        "Declared offset -0.1 not applied to ['red'] (drop_offset=True): physical value = "
+        "stored * scale."
+    ]
+
+
+def test_drop_offset_on_items_not_marked_as_applied_warns(tmp_path: Path) -> None:
+    items = syn.stac_items(tmp_path / "scenes", offsets=[0.0, -0.1, -0.1])
+    save_items(items, tmp_path / "items.json", {})
+
+    result = read(
+        str(tmp_path / "items.json"), STAC_RASTER, ReadOptions(bands=["red"], drop_offset=True)
+    )
+
+    # With offsets dropped the items agree, so the scale is attached.
+    assert result.data["red"].attrs["scale_factor"] == syn.STAC_SCALE
+    assert len(result.warnings) == 1
+    assert "3 of 3 items are not marked earthsearch:boa_offset_applied" in result.warnings[0]
+
+
+def test_drop_offset_without_offsets_changes_nothing(tmp_path: Path) -> None:
+    items = syn.stac_items(tmp_path / "scenes")
+    save_items(items, tmp_path / "items.json", {})
+
+    result = read(
+        str(tmp_path / "items.json"), STAC_RASTER, ReadOptions(bands=["scl"], drop_offset=True)
+    )
+
+    assert result.notes == ["drop_offset=True changed nothing: no loaded band declares an offset."]
+
+
+def test_drop_offset_is_only_for_stac(ramp_tif: Path) -> None:
+    with pytest.raises(LoadError, match="drop_offset="):
+        read(str(ramp_tif), Format("raster", "geotiff"), ReadOptions(drop_offset=True))
