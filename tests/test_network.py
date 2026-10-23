@@ -10,8 +10,10 @@ from matplotlib.image import imread
 
 from loci.models import RasterSummary
 from loci.tools.inspect import inspect
+from loci.tools.lineage import lineage
 from loci.tools.load import load
 from loci.tools.preview import preview
+from loci.tools.run import run
 from loci.tools.stac_search import stac_search
 from loci.tools.validate import validate
 from loci.workspace import Workspace
@@ -26,6 +28,15 @@ SCENE = (
     "56/H/LH/2024/6/S2B_56HLH_20240618_0_L2A/"
 )
 SCL_CLASSES = range(12)  # scene classification codes 0..11
+EARTH_SEARCH = "https://earth-search.aws.element84.com/v1"
+
+NDVI = """
+from loci import script
+
+stack = script.read("stack")
+red, nir = script.physical(stack["red"]), script.physical(stack["nir"])
+script.save(((nir - red) / (nir + red)).median("time").rename("ndvi"), "ndvi_median.tif")
+"""
 
 
 def test_remote_cog_loads_lazily_and_inspects_from_an_overview(ws: Workspace) -> None:
@@ -118,3 +129,26 @@ def test_drop_offset_gives_non_negative_reflectance_over_sydney(ws: Workspace) -
     assert red_min(declared.data_ref) < 0  # impossible reflectance with the declared offset
     assert red_min(dropped.data_ref) >= 0
     assert any("not applied" in n for n in dropped.notes)
+
+
+def test_ndvi_run_over_sydney_traces_back_to_earth_search(ws: Workspace) -> None:
+    search = stac_search(ws, bbox=SYDNEY, start="2024-06-01", end="2024-06-30", max_cloud=20)
+    stack = load(ws, search.data_ref, bands=["red", "nir"], drop_offset=True)
+
+    result = run(ws, code=NDVI, inputs={"stack": stack.data_ref})
+    output = result.outputs[0]
+    assert (result.status, result.warnings) == ("ok", [])
+    assert output.validation == "pass"  # includes NDVI within [-1, 1]
+    assert output.data_ref is not None
+
+    bands = inspect(ws, output.data_ref).summary
+    assert isinstance(bands, RasterSummary)
+    stats = bands.bands[0].stats
+    assert stats is not None and stats.mean is not None
+    # Harbour, ocean, suburbs and parks: open water is strongly negative, vegetation positive.
+    assert 0.05 < stats.mean < 0.35
+
+    traced = lineage(ws, output.data_ref)
+    assert [s.produced_by for s in traced.steps] == ["run", "load", "stac_search"]
+    assert traced.original_sources == [EARTH_SEARCH]
+    assert traced.stac_item_count == search.items
