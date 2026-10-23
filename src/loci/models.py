@@ -336,7 +336,10 @@ class RunResult(_Model):
 
 
 class LineageStep(_Model):
-    data_ref: str
+    """One output in a lineage: a data_ref, or a file a run wrote that is not a data_ref."""
+
+    data_ref: str | None = None
+    file: str | None = None
     produced_by: ProducedBy | None
     created_at: str | None = None
     description: str
@@ -349,11 +352,13 @@ class LineageStep(_Model):
 class LineageResult(_Model):
     """What `lineage` returns: how a data_ref was made, back to its original sources.
 
-    `steps` starts with the data_ref itself and lists each ancestor once. `provenance` is its own
-    record without the validation report, which is in the full record at `record_path`.
+    `steps` starts with the output itself and lists each ancestor once, nearest first.
+    `provenance` is the output's own record, without its validation report and with STAC item
+    lists shortened; the full record is at `record_path`.
     """
 
-    data_ref: str
+    data_ref: str | None = None
+    file: str | None = None
     provenance: Provenance | None
     record_path: str | None
     steps: list[LineageStep]
