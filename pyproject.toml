@@ -60,8 +60,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Network tests are deselected by default; run them with `uv run pytest -m network`.
-addopts = ["-ra", "--strict-markers", "--import-mode=importlib", "-m", "not network"]
-markers = ["network: needs internet access (deselected by default)"]
+addopts = ["-ra", "--strict-markers", "--import-mode=importlib", "-m", "not network and not claude"]
+markers = [
+    "network: needs internet access (deselected by default)",
+    "claude: runs real Claude Code sessions; needs the claude CLI, signed in (deselected by default)",
+]
 xfail_strict = true
 filterwarnings = [
     "error",
