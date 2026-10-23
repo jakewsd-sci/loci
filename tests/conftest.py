@@ -1,14 +1,31 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from loci import synthetic
+from loci.checks.core import Layer
+from loci.io import detect_format, read
+from loci.models import ReadOptions
 from loci.workspace import Workspace
+
+MakeLayer = Callable[..., Layer]
 
 
 @pytest.fixture
 def ws(tmp_path: Path) -> Workspace:
     return Workspace(tmp_path / ".loci")
+
+
+@pytest.fixture
+def make_layer() -> MakeLayer:
+    """Build a check Layer from a file: make_layer(path, name="x", crs=..., x_col=...)."""
+
+    def make(path: Path, name: str = "x", **options: str) -> Layer:
+        loaded = read(str(path), detect_format(str(path)), ReadOptions(**options))
+        return Layer(name, loaded.data, loaded.crs_source)
+
+    return make
 
 
 @pytest.fixture(scope="session")
