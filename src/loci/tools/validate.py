@@ -2,6 +2,7 @@
 
 import xarray as xr
 
+from loci import provenance
 from loci.checks.core import Layer, build_report
 from loci.checks.runner import (
     DEFAULT_AREA_TOLERANCE,
@@ -45,6 +46,8 @@ def validate(
         area_by: Column shared by the inputs and the reference; areas are compared per value.
         area_tolerance: Allowed relative area difference (1e-4 is 0.01%).
         max_pixels: Most pixels per band read for raster statistics.
+
+    The report is also kept on each data_ref's provenance record.
     """
     refs = list(dict.fromkeys(data_refs))
     if not refs:
@@ -58,7 +61,9 @@ def validate(
         area_by=area_by,
         area_tolerance=area_tolerance,
     )
-    return build_report(refs, run_checks(layers, options))
+    report = build_report(refs, run_checks(layers, options))
+    provenance.record_validation(ws, report)
+    return report
 
 
 def _layer(ws: Workspace, data_ref: str, max_pixels: int) -> Layer:

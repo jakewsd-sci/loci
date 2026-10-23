@@ -12,10 +12,19 @@ import xarray as xr
 from pyproj import Transformer
 from shapely.geometry import mapping
 
+from loci import provenance
 from loci.errors import LociError
 from loci.io import STAC_ITEMS, read
 from loci.io.stac import EARTH_SEARCH, loadable_bands, save_items, search_items
-from loci.models import Bounds, ItemRow, MonthCount, NumericStats, ReadOptions, StacSearchResult
+from loci.models import (
+    Bounds,
+    ItemRow,
+    MonthCount,
+    NumericStats,
+    ReadOptions,
+    SourceInput,
+    StacSearchResult,
+)
 from loci.summary.common import iso, sig
 from loci.workspace import Workspace
 
@@ -86,6 +95,29 @@ def stac_search(
     save_items(items, path, search)
     frame = read(str(path), STAC_ITEMS, ReadOptions())
     ws.register(frame, str(path), data_ref=data_ref)
+    arguments = {
+        "start": start,
+        "end": end,
+        "bbox": bbox,
+        "aoi": aoi,
+        "collection": collection,
+        "max_cloud": max_cloud,
+        "catalog": catalog,
+        "limit": limit,
+    }
+    inputs = [SourceInput(uri=catalog, stac_items=[item.id for item in items])]
+    if aoi is not None:
+        inputs.append(SourceInput(name="aoi", data_ref=aoi))
+    provenance.write(
+        ws,
+        provenance.new_record(
+            produced_by="stac_search",
+            data_ref=data_ref,
+            call=provenance.tool_call("stac_search", arguments),
+            inputs=inputs,
+            parameters=search,
+        ),
+    )
     return _summarise(data_ref, search, frame.data, items, area_notes)
 
 

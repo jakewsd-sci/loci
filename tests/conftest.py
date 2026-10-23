@@ -2,6 +2,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pystac
 import pytest
 
 from loci import synthetic
@@ -108,3 +109,15 @@ def coarse_tif(fixture_dir: Path) -> Path:
 @pytest.fixture(scope="session")
 def shifted_tif(fixture_dir: Path) -> Path:
     return synthetic.write_shifted_raster(fixture_dir / "shifted.tif")
+
+
+@pytest.fixture
+def stac_scenes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[pystac.Item]:
+    """The synthetic STAC scenes, served in place of a catalogue to stac_search."""
+    items = synthetic.stac_items(tmp_path / "scenes")
+
+    def search(**_: Any) -> tuple[list[pystac.Item], int]:
+        return items, len(items)
+
+    monkeypatch.setattr("loci.tools.stac_search.search_items", search)
+    return items

@@ -74,6 +74,16 @@ class Workspace:
     def previews_dir(self) -> Path:
         return self._subdir("previews")
 
+    @property
+    def provenance_dir(self) -> Path:
+        """One provenance record per data_ref (see loci.provenance)."""
+        return self._subdir("provenance")
+
+    @property
+    def runs_dir(self) -> Path:
+        """One working directory per run."""
+        return self._subdir("runs")
+
     def register(self, result: ReadResult, uri: str, *, data_ref: str | None = None) -> RefRecord:
         """Record a freshly read dataset and keep it open.
 

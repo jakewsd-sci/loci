@@ -1,12 +1,15 @@
 """The `load` tool: read a raster or vector source into the workspace and describe it."""
 
 from pathlib import Path
+from typing import Any
 
+from loci import provenance
 from loci.errors import LoadError
-from loci.io import STAC_ITEMS, STAC_RASTER, detect_format, is_remote, read
-from loci.models import Kind, ReadOptions, RefSummary
+from loci.io import STAC_ITEMS, STAC_RASTER, ReadResult, detect_format, is_remote, read
+from loci.io.stac import read_items
+from loci.models import Kind, ReadOptions, RefSummary, SourceInput
 from loci.tools.common import describe
-from loci.workspace import REF_PATTERN, Workspace
+from loci.workspace import REF_PATTERN, RefRecord, Workspace
 
 RASTER_LOAD_NOTE = (
     "Pixel statistics are not computed at load; call inspect for per-band statistics."
@@ -63,17 +66,22 @@ def load(
         resampling=resampling,
         drop_offset=True if drop_offset else None,
     )
+    call = provenance.tool_call(
+        "load",
+        {"uri": uri, "kind": kind, **options.model_dump(mode="json", exclude_none=True)},
+    )
     if REF_PATTERN.fullmatch(uri):
-        return _load_items(ws, uri, options, kind)
+        return _load_items(ws, uri, options, kind, call)
     location = _resolve(uri)
     result = read(location, detect_format(location, kind), options)
     record = ws.register(result, location)
+    _record(ws, record, result, call, [SourceInput(uri=location)])
     notes = [RASTER_LOAD_NOTE] if result.kind == "raster" else []
     return describe(record, result.data, notes=notes)
 
 
 def _load_items(
-    ws: Workspace, data_ref: str, options: ReadOptions, kind: Kind | None
+    ws: Workspace, data_ref: str, options: ReadOptions, kind: Kind | None, call: dict[str, Any]
 ) -> RefSummary:
     """Load the pixels of a stac_search result as a new raster data_ref."""
     record = ws.record(data_ref)
@@ -86,7 +94,31 @@ def _load_items(
         raise LoadError("Pixels loaded from STAC items are rasters; omit kind or pass 'raster'.")
     result = read(record.source.uri, STAC_RASTER, options)
     loaded = ws.register(result, record.source.uri)
+    items = [item.id for item in read_items(record.source.uri)[0]]
+    source = SourceInput(data_ref=data_ref, uri=record.source.uri, stac_items=items)
+    _record(ws, loaded, result, call, [source])
     return describe(loaded, result.data, notes=[RASTER_LOAD_NOTE])
+
+
+def _record(
+    ws: Workspace,
+    record: RefRecord,
+    result: ReadResult,
+    call: dict[str, Any],
+    inputs: list[SourceInput],
+) -> None:
+    """Provenance for a load: the call, its resolved read options and what was read."""
+    parameters = result.options.model_dump(mode="json", exclude_none=True)
+    provenance.write(
+        ws,
+        provenance.new_record(
+            produced_by="load",
+            data_ref=record.data_ref,
+            call=call,
+            inputs=inputs,
+            parameters=parameters,
+        ),
+    )
 
 
 def _resolve(uri: str) -> str:

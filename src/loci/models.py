@@ -270,3 +270,95 @@ class ValidationReport(_Model):
     data_refs: list[str]
     counts: dict[CheckStatus, int]
     checks: list[CheckResult]
+
+
+ProducedBy = Literal["load", "stac_search", "run"]
+
+
+class SourceInput(_Model):
+    """Something an output was made from: a data_ref, a file or URL, and any STAC items."""
+
+    name: str | None = None
+    data_ref: str | None = None
+    uri: str | None = None
+    stac_items: list[str] = Field(default_factory=list)
+
+
+class Provenance(_Model):
+    """How an output came to be. One per data_ref, plus one beside every file `run` writes.
+
+    `call` is the tool call as made. For run outputs, `script` is the exact code that ran and
+    `code_sha256` its hash. `software` holds the Python, loci (with a hash of its code), GDAL and
+    key package versions. `validation` is the latest report from validate on this output.
+    """
+
+    data_ref: str | None = None
+    path: str | None = None
+    sha256: str | None = None
+    created_at: str
+    produced_by: ProducedBy
+    call: dict[str, JsonValue]
+    run_id: str | None = None
+    script: str | None = None
+    code_sha256: str | None = None
+    inputs: list[SourceInput] = Field(default_factory=list)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
+    software: dict[str, str] = Field(default_factory=dict)
+    validation: ValidationReport | None = None
+    validated_at: str | None = None
+
+
+RunStatus = Literal["ok", "error", "timeout"]
+
+
+class RunOutput(_Model):
+    """A file a run wrote. Spatial files become data_refs and are validated on the spot."""
+
+    file: str
+    data_ref: str | None = None
+    kind: Kind | None = None
+    validation: CheckStatus | None = None
+    problems: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+
+class RunResult(_Model):
+    run_id: str
+    status: RunStatus
+    exit_code: int | None
+    seconds: float
+    run_dir: str
+    stdout: str
+    stderr: str
+    outputs: list[RunOutput] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class LineageStep(_Model):
+    data_ref: str
+    produced_by: ProducedBy | None
+    created_at: str | None = None
+    description: str
+    inputs: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+    stac_items: int = 0
+    validation: CheckStatus | None = None
+
+
+class LineageResult(_Model):
+    """What `lineage` returns: how a data_ref was made, back to its original sources.
+
+    `steps` starts with the data_ref itself and lists each ancestor once. `provenance` is its own
+    record without the validation report, which is in the full record at `record_path`.
+    """
+
+    data_ref: str
+    provenance: Provenance | None
+    record_path: str | None
+    steps: list[LineageStep]
+    original_sources: list[str]
+    stac_item_count: int
+    stac_items: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
