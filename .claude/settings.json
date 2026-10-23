@@ -1,0 +1,20 @@
+{
+  "enabledMcpjsonServers": ["loci"],
+  "env": {
+    "LOCI_VALIDATION_HOOK": "report"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "^mcp__loci__(load|stac_search|run)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet --project \"$CLAUDE_PROJECT_DIR\" loci-hook",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

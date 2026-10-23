@@ -4,8 +4,76 @@ version = "0.1.0"
 description = "Engine for an agent harness that runs geospatial workflows scientists can trust"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "dask[array]>=2026.8.0",
+    "geopandas>=1.2.0",
+    "matplotlib>=3.11.2",
+    "mcp>=2.3.0",
+    "numpy>=2.5.4",
+    "odc-stac>=0.5.3",
+    "pandas>=3.1.0",
+    "pyarrow>=26.0.0",
+    "pydantic>=2.14.1",
+    "pyproj>=3.8.0",
+    "pystac-client>=0.9.1",
+    "rasterio>=1.5.2",
+    "rioxarray>=0.23.0",
+    "shapely>=2.2.0",
+    "xarray>=2026.9.0",
+]
+
+[project.scripts]
+loci-mcp = "loci.server:main"
+loci-hook = "loci.hooks:main"
 
 [build-system]
-requires = ["uv_build>=0.11.32,<0.12.0"]
+requires = ["uv_build>=0.13.5,<0.14.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.17.2",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, pyupgrade, bugbear, simplify, ruff-specific
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+files = ["src", "tests", "benchmarks"]
+disallow_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+strict_equality = true
+
+# These libraries ship without type information. pandas-stubs and the typeshed stubs for
+# shapely/geopandas exist but are noisy; revisit if untyped calls start hiding real bugs.
+[[tool.mypy.overrides]]
+module = ["geopandas.*", "pandas.*", "pyarrow.*", "pyogrio.*", "rasterio.*", "shapely.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Network tests are deselected by default; run them with `uv run pytest -m network`.
+addopts = ["-ra", "--strict-markers", "--import-mode=importlib", "-m", "not network and not claude"]
+pythonpath = ["."]  # so tests can import benchmarks/
+markers = [
+    "network: needs internet access (deselected by default)",
+    "claude: runs real Claude Code sessions; needs the claude CLI, signed in (deselected by default)",
+]
+xfail_strict = true
+filterwarnings = [
+    "error",
+    # rioxarray uses affine's deprecated `*` operator internally.
+    "ignore:Use `@` matmul instead of `\\*` mul operator:PendingDeprecationWarning",
+    # odc-geo uses shapely's deprecated ops.transform internally.
+    "ignore:The 'shapely.ops.transform\\(\\)' function is deprecated:DeprecationWarning",
+    # odc-loader's coarse (overview) reads warp from a dataset opened without its transform and
+    # supply the transform explicitly; tests confirm the values. loci never relies on it.
+    "ignore:Dataset has no geotransform, gcps, or rpcs:rasterio.errors.NotGeoreferencedWarning",
+]
