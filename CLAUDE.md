@@ -19,6 +19,8 @@ uv sync                    # create .venv and install the package plus the dev g
 uv run pytest              # tests (network tests deselected)
 uv run pytest -m network   # only tests that need internet access (Sentinel-2 over Sydney)
 uv run pytest -m claude    # real Claude Code sessions (needs the claude CLI; costs model usage)
+uv run python benchmarks/run.py           # benchmark: reference solutions (also in pytest)
+uv run python benchmarks/run.py --agent   # benchmark: Claude Code answers (costs model usage)
 uv run ruff check          # lint
 uv run ruff format         # format (CI runs `ruff format --check`)
 uv run mypy                # type-check src/ and tests/
@@ -52,7 +54,8 @@ src/loci/        the package
   server.py      thin MCP wrapper over tools/ (`loci-mcp`)                               [M5]
   hooks.py       Claude Code hook that validates new data_refs (`loci-hook`)             [M5]
 tests/           pytest suite; fixtures are generated in code by loci.synthetic
-benchmarks/      five benchmark workflows and run.py                                     [M6]
+benchmarks/      five tasks with known answers (tasks.py), Claude Code sessions (agent.py)
+                 and the runner (run.py); results/ is git-ignored                        [M6]
 .mcp.json        starts the MCP server for Claude Code                                   [M5]
 .claude/         settings.json: the validation hook and its mode                         [M5]
 docs/DECISIONS.md  decision log

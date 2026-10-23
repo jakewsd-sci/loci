@@ -80,6 +80,20 @@ failed validation stop Claude until it is dealt with, or to turn the hook off, s
 { "env": { "LOCI_VALIDATION_HOOK": "block" } }
 ```
 
+## Benchmark
+
+Five geospatial questions on synthetic data with exactly known answers. Each has a trap that makes
+a careless answer wrong: cloud in a time series, layers in different CRSs, areas in degrees, a
+point table with no stated CRS, and slope on a grid in degrees.
+
+```sh
+uv run python benchmarks/run.py           # reference solutions through loci's tools
+uv run python benchmarks/run.py --agent   # Claude Code answers each task (costs model usage)
+```
+
+Each attempt keeps its data, workspace and transcript under `benchmarks/results/`, so every
+answer can be traced with `lineage`.
+
 ## Documentation
 
 - [`CLAUDE.md`](CLAUDE.md): project guide, commands, rules and milestones.

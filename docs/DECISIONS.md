@@ -718,3 +718,60 @@ A real question over Sydney ("how green was the land in June 2024?") was also ru
 
 **Alternatives.** Scripting the MCP calls without a model: deterministic, but it does not test
 what matters, which is how an agent uses the tools and the hook in Claude Code.
+
+## D-041 The benchmark: five traps with exact answers, scored two ways (M6, 2026-10-23)
+
+**Context.** The brief asks for five benchmark tasks and `benchmarks/run.py`. The guiding question
+is whether a scientist gets a right answer they can trust. Real data has no exact answers, and
+judging free text is noisy.
+
+**Choice.** Five realistic questions on synthetic data from `loci.synthetic`. Each has one trap
+that makes a careless answer measurably wrong:
+
+| Task | Data | Trap | Answer |
+|---|---|---|---|
+| cloudy-ndvi | STAC time series | cloud, marked only in the 20 m SCL band | 0.5477 |
+| catchment-elevation | DEM in UTM, polygons in WGS 84 | CRS mismatch, nodata | 50 m |
+| forest-area | polygons in WGS 84 | area in square degrees or Web Mercator | 2.00 ha |
+| ndvi-at-sites | CSV without a CRS, NDVI raster | CRS not stated, 2 of 10 sites off the map | 0.300 |
+| steep-terrain | DEM in degrees, heights in metres | slope with mixed units | 60% |
+
+There are two ways to answer them.
+- **Reference mode** answers each task through loci's tools, as a careful agent would. It also
+  records what loci reported about the trap. These runs are in the test suite, so every commit
+  checks the engine's answers. Each answer is itself a `run` output, so `lineage` traces it.
+- **Agent mode** (`--agent`) asks Claude Code each question in a fresh session with only the loci
+  tools. It scores:
+  - the answer against the tolerance (the main score);
+  - whether the reply mentions the trap, by regular expression (rough);
+  - turns, cost, time, tool calls and automatic validations.
+
+  Each attempt keeps its data, workspace and transcript.
+
+Task 1 starts from a STAC search made by the real `stac_search`, with the catalogue simulated by
+synthetic scenes; the patch lives only in the benchmark. Agent runs cost model usage and vary from
+run to run, so they are not in CI; `--repeat` measures the spread.
+
+**Alternatives.**
+- Real data with judged answers: realistic, but it cannot be scored exactly.
+- Scripted answers only: deterministic, but they say nothing about the agent.
+- A model as judge of the caveats: richer, but it adds a second noisy model to the score.
+
+## D-042 No terrain library yet (M6, 2026-10-23)
+
+**Context.** The brief asks for one terrain library to be chosen and recorded. The user agreed:
+xarray-spatial if slope and aspect are all that is needed, pysheds for catchments and flow
+routing. The benchmark needs only slope.
+
+**Choice.** No terrain library in M6. What was checked in October 2026:
+- xarray-spatial 0.10.19 requires `numpy<2.5`, so it would downgrade the project's numpy 2.5.4.
+- pysheds 0.5 resolves with the current stack. It brings numba, scikit-image and scipy, but it is
+  built for hydrology, not slope.
+- richdem has not been released since 2018.
+
+Slope on a metric grid takes a few lines of numpy, which every `run` script has. The reference
+solution reprojects to UTM and uses `np.gradient`. The choice goes back to the user: pysheds when
+a task needs flow routing, xarray-spatial once it supports numpy 2.5.
+
+**Alternatives.** Downgrading numpy for xarray-spatial: it changes the core numeric library for
+one function. Adding pysheds now: a heavy dependency that nothing yet uses.
