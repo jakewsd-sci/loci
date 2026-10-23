@@ -829,3 +829,26 @@ modern, minimal design and agreed to the dependencies below.
 - A tile server such as TiTiler: it brings more than an MVP needs. rio-tiler is the library
   inside it.
 - Mapbox GL or Google Maps: they need keys. MapLibre is the open fork.
+
+## D-044 `run` checks its declared inputs against each other (Phase 2, 2026-10-23)
+
+**Context.** In the benchmark baseline (D-041), no agent called `validate` on the layers it
+combined. The hook checks each new data_ref on its own. So the checks that compare inputs (same
+CRS, overlapping extents, aligned grids) never ran, and only the agent's own knowledge caught
+those traps.
+
+**Choice.** When a script declares two or more inputs, `run` runs those comparison checks before
+it executes. The report is `RunResult.input_checks`, a `ValidationReport`, plus one warning when
+it is not a pass. This adds a field to `models.py` and a paragraph to the `run` docstring.
+- The checks read no pixels, so they are cheap even for remote STAC stacks. Each input's own
+  checks are left to the hook.
+- The report is kept in the run's `run.json`, not on the inputs' provenance records. A layer's
+  badge stays about that layer, not about one way of combining it.
+- The run goes ahead whatever the checks find. Often the script itself is where the mismatch is
+  resolved, for example by reprojecting one input explicitly. The report tells the agent and the
+  scientist to say how.
+
+**Alternatives.**
+- Stop the run on a fail: that blocks the scripts that fix the mismatch.
+- Ask the agent to call `validate` first: the baseline shows it does not.
+- Full `validate` on the inputs: it re-reads pixel statistics that the hook already checked.

@@ -47,7 +47,9 @@ loci runs geospatial analysis that a scientist can trust and trace.
 - run executes Python for anything the tools do not do. Read data only with
   loci.script.read(name) for inputs declared in run(inputs={name: data_ref}), so provenance lists
   them; it gives physical values (scale and offset applied, nodata as NaN). Save results with
-  loci.script.save(obj, "name.tif"); they are registered and validated automatically.
+  loci.script.save(obj, "name.tif"); they are registered and validated automatically. Inputs
+  are first checked against each other (input_checks): say how the script deals with any
+  mismatch, such as reprojecting one input explicitly.
 - lineage traces a data_ref, or a file written by run, back to its original sources.
 """
 

@@ -8,6 +8,7 @@ from loci.checks.runner import (
     DEFAULT_AREA_TOLERANCE,
     DEFAULT_MIN_VALID_FRACTION,
     CheckOptions,
+    cross_checks,
     run_checks,
 )
 from loci.errors import LociError
@@ -64,6 +65,20 @@ def validate(
     report = build_report(refs, run_checks(layers, options))
     provenance.record_validation(ws, report)
     return report
+
+
+def check_together(ws: Workspace, data_refs: list[str]) -> ValidationReport | None:
+    """Only the checks of inputs against each other, or None for fewer than two data_refs.
+
+    Not a tool: `run` uses it on its declared inputs. Each input's own checks are left to
+    `validate` (and the hook), and the report is not kept on the inputs' provenance records,
+    whose validation stays their own.
+    """
+    refs = list(dict.fromkeys(data_refs))
+    if len(refs) < 2:
+        return None
+    layers = [Layer(ref, ws.open(ref), ws.record(ref).crs_source) for ref in refs]
+    return build_report(refs, cross_checks(layers))
 
 
 def _layer(ws: Workspace, data_ref: str, max_pixels: int) -> Layer:

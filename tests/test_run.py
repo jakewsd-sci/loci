@@ -42,6 +42,48 @@ def test_a_script_reads_inputs_and_its_output_is_registered(ws: Workspace, ramp_
     assert float(doubled["elevation"].max()) == 2 * syn.RAMP_MAX
     run_json = json.loads(Path(result.run_dir, "run.json").read_text())
     assert run_json["started_at"] <= run_json["finished_at"]
+    assert result.input_checks is None  # one input: nothing to compare it with
+
+
+READ_BOTH = """
+from loci import script
+script.read("a"), script.read("b")
+print("read both")
+"""
+
+
+def test_inputs_are_checked_together_without_stopping_the_run(
+    ws: Workspace, ramp_tif: Path, tmp_path: Path
+) -> None:
+    grid = load(ws, str(ramp_tif)).data_ref  # UTM zone 33N
+    parcels = load(ws, str(syn.write_polygons(tmp_path / "parcels.geojson"))).data_ref  # WGS 84
+
+    result = run(ws, code=READ_BOTH, inputs={"a": grid, "b": parcels})
+
+    assert result.status == "ok" and "read both" in result.stdout
+    assert result.input_checks is not None and result.input_checks.status == "fail"
+    crs = next(c for c in result.input_checks.checks if c.check == "crs_consistent")
+    assert crs.status == "fail" and crs.hint
+    assert any(w.startswith("The inputs were checked together: fail.") for w in result.warnings)
+    run_json = json.loads(Path(result.run_dir, "run.json").read_text())
+    assert run_json["input_checks"]["status"] == "fail"
+    for ref in (grid, parcels):  # each input keeps its own validation, not the combined one
+        record = provenance.read(ws, ref)
+        assert record is not None and record.validation is None
+
+
+def test_inputs_on_offset_grids_warn(ws: Workspace, ramp_tif: Path, shifted_tif: Path) -> None:
+    a, b = load(ws, str(ramp_tif)).data_ref, load(ws, str(shifted_tif)).data_ref
+
+    result = run(ws, code=READ_BOTH, inputs={"a": a, "b": b})
+
+    assert result.input_checks is not None
+    statuses = {c.check: c.status for c in result.input_checks.checks}
+    assert statuses == {  # half a pixel apart: almost all of one lies within the other
+        "crs_consistent": "pass",
+        "extents_overlap": "warn",
+        "resolution_consistent": "warn",
+    }
 
 
 def test_outputs_carry_provenance_and_a_sidecar(ws: Workspace, ramp_tif: Path) -> None:

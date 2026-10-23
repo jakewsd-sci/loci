@@ -42,10 +42,7 @@ def run_checks(layers: Sequence[Layer], options: CheckOptions) -> list[CheckResu
     check_options(layers, options)
     results = [r for layer in layers for r in _layer_checks(layer, options)]
     if len(layers) > 1:
-        results += [check_crs_consistent(layers), check_extents_overlap(layers)]
-        rasters = [layer for layer in layers if layer.raster is not None]
-        if len(rasters) > 1:
-            results.append(check_resolution_consistent(rasters))
+        results += cross_checks(layers)
     if options.area_reference is not None:
         results += [
             check_area_conserved(
@@ -57,6 +54,18 @@ def run_checks(layers: Sequence[Layer], options: CheckOptions) -> list[CheckResu
             for layer in layers
             if layer.vector is not None
         ]
+    return results
+
+
+def cross_checks(layers: Sequence[Layer]) -> list[CheckResult]:
+    """Checks of inputs against each other: same CRS, overlapping extents, aligned grids.
+
+    They read no pixels, so they are cheap even for large or remote inputs.
+    """
+    results = [check_crs_consistent(layers), check_extents_overlap(layers)]
+    rasters = [layer for layer in layers if layer.raster is not None]
+    if len(rasters) > 1:
+        results.append(check_resolution_consistent(rasters))
     return results
 
 
