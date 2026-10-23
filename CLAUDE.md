@@ -38,6 +38,8 @@ src/loci/        the package
   workspace.py   data_ref registry on disk under .loci/                                  [M1]
   synthetic.py   fixture writers with exactly known answers (tests and benchmarks)       [M1]
   render.py      PNG drawing behind `preview`                                            [M3]
+  provenance.py  provenance records: ledger under .loci/provenance/ plus file sidecars   [M4]
+  script.py      helpers for scripts started by `run` (read, physical, save)             [M4]
   server.py      thin MCP wrapper over tools/                                            [M5]
 tests/           pytest suite; fixtures are generated in code by loci.synthetic
 benchmarks/      five benchmark workflows and run.py                                     [M6]
@@ -68,6 +70,9 @@ docs/DECISIONS.md  decision log
   decides where it applies.
 - STAC loads never resample or reproject on their own: mixed resolutions or CRSs are errors until
   `resolution=` or `output_crs=` is given, and whatever was done is recorded as a note.
+- Every new data_ref or file a tool makes gets a provenance record (`loci.provenance`) naming its
+  inputs, so `lineage` can trace it. Scripts for `run` read data only through declared inputs and
+  compute on `script.physical()` values, never on raw scaled integers.
 - Add tools only when a benchmark task needs them. Ask before adding substantial dependencies.
 - Record significant decisions in `docs/DECISIONS.md`: one short entry with context, choice and
   alternatives.
@@ -84,6 +89,6 @@ questions, then stop. When something is ambiguous, ask rather than guess.
 - [x] M1: workspace with `data_ref`; `load` and `inspect` for rasters and vectors; synthetic fixtures
 - [x] M2: `validate` with geospatial invariants, each tested on passing and failing fixtures
 - [x] M3: `stac_search` and `preview`
-- [ ] M4: `run`, provenance sidecars, `lineage`
+- [x] M4: `run`, provenance sidecars, `lineage`
 - [ ] M5: MCP server, `.mcp.json`, hooks that run validation automatically, end-to-end check
 - [ ] M6: five benchmark tasks and `benchmarks/run.py`

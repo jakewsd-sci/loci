@@ -497,3 +497,97 @@ updates the tool, not the dependencies.
 
 **Alternatives.** Leaving CI unpinned: always current, but upstream releases could break CI with no
 change here (D-005).
+
+## D-032 Provenance: a ledger per data_ref, and sidecars that travel with files (M4, 2026-10-23)
+
+**Context.** The brief asks for a JSON record beside every output: inputs, parameters, the call,
+a code hash, package versions, timestamps and the validation report. Some outputs are data_refs
+held in the workspace; others are plain files a scientist will copy elsewhere.
+
+**Choice.** One `Provenance` model in `models.py`, written in two places.
+- Every data_ref gets `.loci/provenance/<data_ref>.json`, from `load`, `stac_search` and `run`.
+- Files written by `run` also get `<file>.prov.json` beside them, so the record goes where the file
+  goes.
+- Inputs are `SourceInput`s: a parent data_ref, an outside URI, or both, plus the STAC item IDs
+  behind them.
+- The call is the tool name and its non-empty arguments.
+- `software` records Python, loci's version, a hash of loci's own source, GDAL and the versions of
+  the core geo packages, so "which code made this" survives editable installs.
+- `validate` writes its latest report into the record of every data_ref it covered, with a
+  timestamp.
+
+Records are written atomically. Refs from before M4 have no record, and `lineage` falls back to
+their workspace record and says so.
+
+**Alternatives.**
+- Sidecars only: data_refs have no file of their own to sit beside.
+- One append-only log file: easy to write, but it has to be parsed and filtered to answer "how was
+  this made".
+- A full provenance standard such as W3C PROV: more expressive, but heavier than the questions
+  lineage needs to answer. The model can be exported to it later.
+
+## D-033 run: a script in its own process and folder, with declared inputs (M4, 2026-10-23)
+
+**Context.** Analyses beyond the built-in tools need arbitrary code, but every output still has to
+say exactly what it was made from, and large data must stay out of the model's context.
+
+**Choice.** `run(code=... | path=..., inputs={name: data_ref}, parameters={...}, timeout=...)`.
+- The script runs with the project's Python in a subprocess, inside `.loci/runs/<run_id>/`. That
+  folder keeps the exact script, its inputs and parameters, stdout, stderr and `run.json`.
+- Scripts reach data through `loci.script`: `read(name)` opens only declared inputs, and `save()`
+  writes to `outputs/`.
+- After a successful run, every file in `outputs/` is registered. Spatial files become data_refs;
+  other files are kept as files. Each gets provenance naming the run, the script's hash, its inputs
+  and its parameters, and is validated straight away. The result lists failures.
+- Failed and timed-out runs register nothing, but keep their folder for debugging.
+- Arguments, refs and parameters are checked before anything runs.
+- The result carries only the tails of stdout and stderr.
+
+`run` is not a sandbox. A script can still open files directly. Declared inputs make the honest
+path the easy one; they do not enforce it.
+
+**Alternatives.**
+- `exec` in the server process: faster, but a crash or a leak takes the server down.
+- Containers: real isolation, but heavy for a single-user tool. They can come later behind the
+  same signature.
+- Scanning the script for file reads: unreliable, and it would give false confidence.
+
+## D-034 lineage: a walk over provenance records (M4, 2026-10-23)
+
+**Context.** "Where did this number come from?" should have a short, complete answer.
+
+**Choice.** `lineage(target)` takes a data_ref, or a path to a file with a sidecar, and walks parent
+data_refs breadth-first.
+- Each step names what produced it, gives a one-line description, and lists its parents, its
+  outside sources, its STAC item count and its latest validation status.
+- `original_sources` gathers every outside URI. STAC item IDs are gathered across steps; the first
+  10 are listed alongside the total.
+- Changed sources and ancestors missing from the workspace are warnings. Records from before M4
+  are notes.
+- The target's own record is included without its validation report, so the result stays small:
+  2.6 KB for the Sydney NDVI run.
+
+**Alternatives.** Returning every record in full: complete, but it grows with depth and mostly
+repeats itself. A graph format (e.g. DOT): useful for a future UI, and it can be built from the
+same steps.
+
+## D-035 Float outputs carry physical values, never inherited scaling (M4, 2026-10-23)
+
+**Context.** The first Sydney NDVI run validated and looked fine, but the preview stretch was
+-9e-05 to 9e-05. xarray keeps attributes through arithmetic, so NDVI inherited red's
+`scale_factor` of 0.0001. `save()` wrote it into the GeoTIFF, and every reader then scaled NDVI by
+10,000. Validation passed because NDVI in [-1e-4, 1e-4] lies inside [-1, 1].
+
+**Choice.**
+- `script.physical(da)` turns raw bands into floats: nodata becomes NaN, scale and offset are
+  applied, and the packing attributes are dropped. The docs and examples compute on its output.
+- `save()` keeps scale and offset only for integer bands, where they are packing. For float bands
+  it writes 1 and 0. If a float band carries other values, it records a warning through
+  `script.warn()`, and `run` returns that warning in its result.
+- A test runs the same NDVI with and without `physical()`. With it, the result is the known answer;
+  without it, the result is wrong (the offset is ignored) and the run is flagged.
+
+**Alternatives.**
+- Clearing attributes globally with `xr.set_options(keep_attrs=False)`: it hides the symptom for
+  scripts loci writes, but not for scripts users write.
+- Writing inherited scaling and trusting the script: that is how this bug happened.

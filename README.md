@@ -26,6 +26,8 @@ from loci.tools.load import load
 from loci.tools.preview import preview
 from loci.tools.stac_search import stac_search
 from loci.tools.inspect import inspect
+from loci.tools.lineage import lineage
+from loci.tools.run import run
 from loci.tools.validate import validate
 
 ws = Workspace(".loci")
@@ -45,6 +47,19 @@ found = stac_search(
 )
 stack = load(ws, found.data_ref, bands=["red", "green", "blue"])
 print(preview(ws, stack.data_ref).path)  # PNG of the least cloudy day
+
+# Your own analysis, in its own process; outputs are registered, validated and traced
+NDVI = """
+from loci import script
+stack = script.read("stack")
+red, nir = script.physical(stack["red"]), script.physical(stack["nir"])
+script.save(((nir - red) / (nir + red)).median("time").rename("ndvi"), "ndvi.tif")
+"""
+bands = load(ws, found.data_ref, bands=["red", "nir"], drop_offset=True)  # see D-030
+result = run(ws, code=NDVI, inputs={"stack": bands.data_ref})
+ndvi = result.outputs[0]  # a data_ref, already validated, with a provenance record
+for step in lineage(ws, ndvi.data_ref).steps:  # run <- load <- stac_search <- Earth Search
+    print(step.produced_by, step.description)
 ```
 
 ## Documentation
