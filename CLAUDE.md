@@ -6,8 +6,8 @@ Guide for Claude Code (and humans) working in this repository.
 
 `loci` is the engine for an agent harness that helps scientists run geospatial workflows they can
 trust. Phase 1 is a Python package exposed as an MCP server and used from Claude Code, with
-verification and provenance built in from the start. A map-first IDE comes later and will be built
-on the same tool interfaces.
+verification and provenance built in from the start. Phase 2 is a map-first IDE on the same tool
+interfaces: a local web app with a map, layers, code, lineage and an agent (`loci-app`).
 
 Guiding question for every feature: **does it help a scientist ask a better question, trust an
 answer, or make a decision?**
@@ -24,10 +24,14 @@ uv run python benchmarks/run.py --agent   # benchmark: Claude Code answers (cost
 uv run ruff check          # lint
 uv run ruff format         # format (CI runs `ruff format --check`)
 uv run mypy                # type-check src/ and tests/
+uv run loci-app            # the map interface at http://127.0.0.1:8765 (needs app/dist)
+cd app && npm install      # the web app's dependencies (Node 22)
+cd app && npm run build    # type-check and bundle into app/dist, which loci-app serves
+cd app && npm run dev      # Vite dev server with hot reload; proxies /api to loci-app
 ```
 
-Run lint, format, mypy and pytest before every commit. CI runs the same checks on Python 3.12
-and 3.13.
+Run lint, format, mypy and pytest before every commit, and `npm run build` in `app/` when the app
+changes. CI runs the Python checks on Python 3.12 and 3.13, and builds the app on Node 22.
 
 ## Using loci from Claude Code
 
@@ -53,6 +57,12 @@ src/loci/        the package
   script.py      helpers for scripts started by `run` (read, physical, save)             [M4]
   server.py      thin MCP wrapper over tools/ (`loci-mcp`)                               [M5]
   hooks.py       Claude Code hook that validates new data_refs (`loci-hook`)             [M5]
+  web/           local HTTP API for the map interface (`loci-app`)                       [P2]
+    layers.py    layer list, map tiles (rio-tiler), point values, GeoJSON
+    agent.py     Claude Agent SDK bridge: loci's MCP server, the validation hook, events
+    project.py   the project's scripts under analysis/
+    app.py       Starlette routes, server-sent events, serves app/dist
+app/             React + TypeScript web app (Vite): MapLibre map, Monaco editor          [P2]
 tests/           pytest suite; fixtures are generated in code by loci.synthetic
 benchmarks/      five tasks with known answers (tasks.py), Claude Code sessions (agent.py)
                  and the runner (run.py); results/ is git-ignored                        [M6]
@@ -69,7 +79,8 @@ docs/DECISIONS.md  decision log
   why in `docs/DECISIONS.md`.
 - **Layering.** Core code (`io/`, `summary/`, `checks/`) works on xarray and geopandas objects and
   knows nothing about refs or MCP. `tools/` adds workspace handling. `server.py` only adapts
-  `tools/` to MCP.
+  `tools/` to MCP. `web/` serves the same workspace and tools over HTTP for `app/`; the app never
+  reads data files itself.
 - **No silent guesses.** Assumptions (for example an assumed CRS) are flagged in results. Nothing is
   reprojected, resampled or dropped implicitly.
 - **General across data types.** Rasters, vectors and point data are all first-class, not only
@@ -107,3 +118,8 @@ questions, then stop. When something is ambiguous, ask rather than guess.
 - [x] M4: `run`, provenance sidecars, `lineage`
 - [x] M5: MCP server, `.mcp.json`, hooks that run validation automatically, end-to-end check
 - [x] M6: five benchmark tasks and `benchmarks/run.py`
+
+Phase 2, the map interface:
+
+- [x] MVP: `loci-app` with map, layers, inspector, agent with model choice, code editor, lineage
+- [ ] Next: chosen with the user from the MVP's known limitations
