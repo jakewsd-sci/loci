@@ -52,7 +52,7 @@ def summarise_vector(
         geometry_types=types,
         null_geometries=int(missing.sum()),
         empty_geometries=int(empty.sum()),
-        invalid_geometries=_invalid_geometries(geoms, present),
+        invalid_geometries=invalid_geometries(geoms, present),
         attributes=attributes,
         attributes_omitted=len(columns) - len(attributes),
         points=_points_summary(geoms[present]) if set(types) == {"Point"} else None,
@@ -122,7 +122,8 @@ def vector_notes(summary: VectorSummary) -> list[str]:
     return notes
 
 
-def _invalid_geometries(geoms: np.ndarray, present: np.ndarray) -> InvalidGeometries:
+def invalid_geometries(geoms: np.ndarray, present: np.ndarray) -> InvalidGeometries:
+    """Count of invalid geometries among `present` ones, with the first few rows and reasons."""
     invalid = present.copy()
     invalid[present] = ~shapely.is_valid(geoms[present])
     rows = np.flatnonzero(invalid)

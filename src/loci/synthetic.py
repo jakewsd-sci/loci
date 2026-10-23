@@ -78,6 +78,12 @@ POLY_SCORE = [0.5, 1.5, 2.5, 3.5]
 POLY_SCORE_MEAN = 2.0
 POLY_SURVEYED = ["2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01"]
 
+# Catchments: the grid's west and east columns, 200 m tall and 100 m wide (20,000 m2 each).
+# Overlaying the land-use grid on them gives each square a catchment.
+CATCHMENTS = ("west", "east")
+CATCHMENT_AREA = 2 * POLY_AREA
+POLY_CATCHMENT = ["west", "east", "west", "east"]
+
 # Dirty polygons: valid, self-intersecting bowtie, empty, null (in that row order).
 DIRTY_INVALID_ROW = 1
 
@@ -257,6 +263,19 @@ def polygons() -> gpd.GeoDataFrame:
         geometry=squares,
         crs=UTM33N,
     )
+
+
+def catchments() -> gpd.GeoDataFrame:
+    """Two catchments covering the polygon grid: 'west' (left column) and 'east' (right)."""
+    x0, y0 = ORIGIN
+    top, bottom = y0, y0 - 2 * POLY_SIZE
+    shapes = [box(x0 + c * POLY_SIZE, bottom, x0 + (c + 1) * POLY_SIZE, top) for c in range(2)]
+    return gpd.GeoDataFrame({"catchment": list(CATCHMENTS)}, geometry=shapes, crs=UTM33N)
+
+
+def landuse_by_catchment() -> gpd.GeoDataFrame:
+    """The polygon grid with the catchment each square falls in: an exact land-use overlay."""
+    return polygons().assign(catchment=POLY_CATCHMENT)
 
 
 def write_polygons(path: Path) -> Path:
