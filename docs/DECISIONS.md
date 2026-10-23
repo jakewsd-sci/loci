@@ -485,3 +485,15 @@ quirk, so a fix in Earth Search shows up as a failure.
 
 **Alternatives.** Dropping the offset automatically whenever the flag is set: likely right today,
 but a silent, provider-specific guess. A per-band option: finer, but nothing needs it yet.
+
+## D-031 uv 0.13.5 (2026-10-23)
+
+**Context.** D-005 pinned CI to uv 0.11.32, the version this environment happened to have, and
+noted that bumping is a one-line change. uv 0.13.5 is current, and the user asked for the bump.
+
+**Choice.** CI pins uv 0.13.5 and the `uv_build` backend is bounded to `>=0.13.5,<0.14.0`.
+Re-resolving `uv.lock` with uv 0.13.5 gives an identical file, so no package versions change: this
+updates the tool, not the dependencies.
+
+**Alternatives.** Leaving CI unpinned: always current, but upstream releases could break CI with no
+change here (D-005).
