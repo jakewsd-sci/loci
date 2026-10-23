@@ -38,6 +38,23 @@ warnings.filterwarnings(
 )
 
 EARTH_SEARCH = "https://earth-search.aws.element84.com/v1"
+
+# Sentinel-2 L2A scene classification (the SCL band), and the classes that hide the ground.
+SCL_CLASSES = {
+    0: "no data",
+    1: "saturated or defective",
+    2: "dark area or topographic shadow",
+    3: "cloud shadow",
+    4: "vegetation",
+    5: "not vegetated",
+    6: "water",
+    7: "unclassified",
+    8: "cloud, medium probability",
+    9: "cloud, high probability",
+    10: "thin cirrus",
+    11: "snow or ice",
+}
+SCL_OBSCURED = frozenset({0, 1, 3, 8, 9, 10})
 SEARCH_KEY = "loci:search"
 BOA_APPLIED = "earthsearch:boa_offset_applied"
 GROUPBY = "solar_day"
