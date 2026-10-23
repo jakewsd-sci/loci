@@ -60,7 +60,7 @@ def stats_source(record: RefRecord, ds: xr.Dataset, max_pixels: int) -> StatsSou
             if coarse is not None:
                 return coarse
         elif "time" not in ds.dims:
-            overview = _overview(record, needed)
+            overview = overview_source(record, needed)
             if overview is not None:
                 return overview
     return plan_stats(ds, max_pixels)
@@ -77,7 +77,7 @@ def _coarser_stac(record: RefRecord, factor: int) -> StatsSource | None:
     return StatsSource(ds, "overview", factor)
 
 
-def _overview(record: RefRecord, needed: int) -> StatsSource | None:
+def overview_source(record: RefRecord, needed: int) -> StatsSource | None:
     """The finest stored overview at least `needed` times coarser, if the file has one."""
     uri, options = record.source.uri, record.source.options
     try:
