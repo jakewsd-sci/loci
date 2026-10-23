@@ -91,3 +91,175 @@ brief's Parquet support, and pydantic, which the MCP SDK already depends on.
 
 **Alternatives.** Declaring the whole stack up front: simpler `pyproject.toml` history, but unused
 dependencies hide which parts of the stack each feature really needs.
+
+## D-007 data_ref format: `{kind}-{8 hex}`, validated before use (M1, 2026-10-23)
+
+**Context.** Tools hand data around by reference. Refs come back from the model, so they can be
+mistyped or malformed.
+
+**Choice.** Refs look like `raster-3f9a2c1b` or `vector-91be07aa`. They are random, readable, and
+show their kind at a glance. Every ref is checked against a strict pattern before it becomes part
+of a file path, which rules out path traversal and gives a clear error with recent refs as a hint.
+
+**Alternatives.** Content hashes: they deduplicate, but hashing large or remote data is slow and
+the refs are long. UUIDs: unique, but long and they don't show the kind.
+
+## D-008 Project-level, disk-backed workspace (M1, 2026-10-23)
+
+**Context.** The MCP server is long-lived, but `run` scripts (M4) and hooks (M5) are separate
+processes that must resolve refs too. Lineage must survive server restarts.
+
+**Choice.** One workspace per project at `.loci/` (gitignored), or `$LOCI_WORKSPACE`. Each ref is
+one JSON record in `.loci/refs/`, written atomically. A record holds:
+- the source URI;
+- the resolved read options (detected columns, chosen layer, assigned CRS), so it can be reopened
+  without repeating any detection;
+- where the CRS came from, and the load warnings;
+- the session that created it;
+- a size and modification-time fingerprint for local files. `inspect` warns when that
+  fingerprint no longer matches.
+
+Opened data is cached in memory per process.
+
+**Alternatives.** An in-memory registry: simpler, but other processes can't see it and it is lost
+on restart. A per-session directory: refs from earlier sessions would be unresolvable. SQLite:
+more machinery than a directory of small JSON files needs.
+
+## D-009 Rasters are xarray Datasets with one variable per band, values kept raw (M1, 2026-10-23)
+
+**Context.** Rasters come from single files now and from STAC (odc-stac) in M3. Analysis code
+should see one representation.
+
+**Choice.** An `xr.Dataset` with one data variable per band and dims `(y, x)` or `(time, y, x)`,
+which matches odc-stac output. Bands take their names from the GeoTIFF band descriptions when
+every band has a distinct one, and are `band_1…n` otherwise. Files open with
+`mask_and_scale=False`, so dtype, nodata, scale and offset are reported as stored and any masking
+is explicit.
+
+Two rioxarray quirks shaped the code:
+- Band descriptions are read through rasterio, because rioxarray drops them at overview levels
+  (and whenever `overview_level=None` is passed).
+- An `atexit` hook clears xarray's file cache. Otherwise cached handles are finalised during
+  interpreter teardown and print `Error in sys.excepthook` to stderr, which matters once `run`
+  captures stderr.
+
+**Alternatives.** A `DataArray` with a `band` dimension: natural for single-file GeoTIFFs, but it
+forces one dtype and one nodata value for all bands and differs from odc-stac output.
+
+## D-010 Rasters open lazily; `load` returns a header, `inspect` computes statistics (M1, 2026-10-23)
+
+**Context.** Loading a remote COG should be cheap, and pixel statistics can be expensive.
+
+**Choice.** Rasters always open as dask-backed arrays, giving one code path for local files and
+`https://`, `s3://` and `/vsi…` URLs. `load` returns the grid and band metadata without reading any
+pixels, plus a note pointing to `inspect`. Vectors are read eagerly and summarised in full.
+`GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR` is set by default, so opening one remote file doesn't
+list its directory first.
+
+**Alternatives.** Statistics at load time: one call fewer, but a slow surprise for large remote
+rasters. Eager reads for small local files: two code paths for little gain.
+
+## D-011 Bounded, labelled raster statistics (M1, 2026-10-23)
+
+**Context.** Statistics on a full Sentinel-2 band (120 million pixels) are too slow for an
+interactive tool. Silently sampled statistics are hard to trust.
+
+**Choice.** `inspect` reads at most `max_pixels` values per band (default 4 million).
+- A larger raster uses the finest overview stored in the file that is coarse enough.
+- If the file has no suitable overview, it falls back to a strided sample.
+- The summary records `stats_method` (`exact`, `overview` or `strided`) and the decimation
+  factor, and a note says that extremes and valid fractions are then approximate.
+
+Valid pixels are those that are finite and not equal to nodata. Measured: the 5490×5490 SCL band of
+a real scene is inspected from its 1/4 overview in under a second over HTTPS.
+
+**Alternatives.** Approximate statistics stored in the GeoTIFF: often missing or stale. Exact
+statistics with dask: correct, but unbounded in time and network traffic.
+
+## D-012 Point data is a vector kind; the CRS rule for coordinate tables (M1, 2026-10-23)
+
+**Context.** Field samples usually arrive as CSV with coordinate columns and often state no CRS.
+Guessing silently undermines trust; refusing is needless friction for the commonest case.
+
+**Choice.** CSV files, and Parquet files without GeoParquet metadata, become point GeoDataFrames
+with every row kept.
+- Coordinate columns are detected by name (lon/longitude/x/easting, lat/latitude/y/northing),
+  case-insensitively. Ambiguity is an error asking for `x_col`/`y_col`.
+- Rows with missing or non-numeric coordinates get a null geometry and are counted in a warning.
+- **CRS rule (chosen by the user):** without `crs=`, EPSG:4326 is assumed only when the columns are
+  named like lon/lat and every value is in range. `crs_source` is then `"assumed"` and a warning
+  says so. In every other case the CRS stays undefined, with a warning.
+- Point layers get a small `points` block counting duplicate locations, which matters for
+  cross-validation.
+
+**Alternatives.** A separate `points` kind: more surface area for no real difference in handling.
+Never assuming a CRS: stricter, but it adds a reload to almost every field dataset.
+
+## D-013 `crs=` assigns a missing CRS and never reprojects (M1, 2026-10-23)
+
+**Context.** Mixing up "this data is in CRS X" with "convert this data to CRS X" is a classic
+source of silently misplaced data.
+
+**Choice.** For files, `crs=` fills in a CRS only when the source declares none. If the source
+already declares a different one, `load` raises an error. For tables, `crs=` is the CRS of the
+coordinate columns. Every result records `crs_source` (`file`, `argument` or `assumed`).
+Reprojection, when it arrives, will be an explicit step with its own provenance.
+
+**Alternatives.** Letting `crs=` override, as some libraries do: convenient, and a quiet way to move
+data across the globe.
+
+## D-014 Summaries capped by count and by bytes (M1, 2026-10-23)
+
+**Context.** Summaries go into the model's context, so they must stay small whatever the data. A
+count cap alone doesn't bound size: 30 long text columns can still produce 10 KB.
+
+**Choice.**
+- Floats are rounded to 6 significant figures and coordinates to 6 decimal places.
+- String values are truncated to 40 characters, with at most 3 top values per attribute and at
+  most 5 invalid-geometry examples.
+- Band and attribute lists are capped at 20 and 30 items, and also by a 3 KB JSON budget.
+  Items are added in order until the next would exceed the budget, and `bands_omitted` or
+  `attributes_omitted` reports the rest.
+
+Tests keep every fixture's full `RefSummary` under 4 KB. The 67-column fixture lists 21 attributes
+in 3.7 KB.
+
+**Alternatives.** A count cap only: simpler, but it doesn't actually guarantee a size.
+Truncating the serialised JSON: would produce invalid or misleading output.
+
+## D-015 pydantic result models; NaN serialised as a string (M1, 2026-10-23)
+
+**Context.** Results need a stable, validated, JSON-ready schema that MCP and a UI can both use.
+
+**Choice.** Frozen pydantic models in `loci/models.py` that reject unknown fields. pydantic is
+already a dependency of the MCP SDK, and FastMCP turns pydantic return types into structured
+output. NaN and infinity serialise as the strings `"NaN"` and `"Infinity"`, so a NaN nodata value
+is not mistaken for `null` ("no nodata").
+
+**Alternatives.** Dataclasses with hand-written JSON: no validation, and more code. TypedDicts: no
+runtime validation.
+
+## D-016 Synthetic fixtures live in the package and are generated, not committed (M1, 2026-10-23)
+
+**Context.** Tests need data with exactly known answers, and the M6 benchmark needs the same
+fixtures.
+
+**Choice.** `loci.synthetic` writes small deterministic files and defines their known answers as
+constants beside each writer (for example, the ramp raster's valid fraction of exactly 0.9).
+`tests/test_synthetic.py` checks those answers with rasterio and geopandas directly, independent of
+loci's own readers. Files are written to a pytest session temp directory, so no binaries go into
+git.
+
+**Alternatives.** Committed binary fixtures: opaque in diffs and easy to let drift from the
+documented answers. Fixtures under `tests/`: the benchmark could not import them cleanly.
+
+## D-017 Warnings are errors in tests (M1, 2026-10-23)
+
+**Context.** Geospatial libraries signal real problems through warnings, such as pyogrio reporting
+that a date field was written as a string. Ignoring them hides those problems.
+
+**Choice.** pytest runs with `filterwarnings = error`. Known, harmless third-party warnings are
+filtered by exact message: rioxarray uses affine's deprecated `*` operator internally. Tests that
+deliberately provoke a warning filter it themselves.
+
+**Alternatives.** Default warning handling: quieter, but it lets regressions through.
