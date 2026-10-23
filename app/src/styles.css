@@ -260,7 +260,7 @@ code, pre, .mono { font-family: var(--mono); }
 .reply-table th { text-align: left; font-weight: 500; color: var(--faint); padding: 4px 12px 4px 0; }
 .reply-table td { padding: 4px 12px 4px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .reply code { font-size: 12px; background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 5px; }
-.ref-link { font-family: var(--mono); font-size: 12px; background: rgba(138, 180, 255, 0.1); color: var(--accent); border: 0; border-radius: 5px; padding: 1px 5px; }
+.ref-link { white-space: nowrap; font-family: var(--mono); font-size: 12px; background: rgba(138, 180, 255, 0.1); color: var(--accent); border: 0; border-radius: 5px; padding: 1px 5px; }
 .ref-link:hover { background: rgba(138, 180, 255, 0.18); }
 .step {
   display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border-radius: 10px; background: var(--raised);

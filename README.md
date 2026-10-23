@@ -84,6 +84,9 @@ failed validation stop Claude until it is dealt with, or to turn the hook off, s
 
 The map interface is a local web app over the same workspace: a map to explore every layer, an
 agent to ask (Opus, Sonnet or Haiku), the scripts it runs, and each layer's lineage and checks.
+Step through the dates of a time stack on one colour scale, click a place to chart its values
+through time (cloudy dates are marked, not hidden), draw a box to ask the agent about an area,
+and show a failed check on the map to see where the problem lies.
 It needs [Node 22](https://nodejs.org/) once to build, and the `claude` CLI for the agent.
 
 ```sh
