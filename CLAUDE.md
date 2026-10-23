@@ -32,7 +32,7 @@ and 3.13.
 src/loci/        the package
   io/            readers: files/URLs -> xarray Dataset (rasters) or GeoDataFrame (vectors)  [M1]
   summary/       compact summaries of loaded data                                        [M1]
-  checks/        geospatial invariants used by `validate`                                [M2]
+  checks/        geospatial invariants and the runner behind `validate`                  [M2]
   tools/         tool functions: Workspace + plain args -> pydantic result models        [M1+]
   models.py      result models: the stable interface for MCP and a future UI             [M1]
   workspace.py   data_ref registry on disk under .loci/                                  [M1]
@@ -62,6 +62,9 @@ docs/DECISIONS.md  decision log
   when it is harmless.
 - Import each tool from its own module (`from loci.tools.load import load`). `loci.tools` does
   not re-export them, because that would shadow the modules of the same name.
+- New checks are small functions in `checks/` that take `Layer`s and return a `CheckResult` with a
+  stable id. Test each one on a fixture built to pass and one built to fail. `checks/runner.py`
+  decides where it applies.
 - Add tools only when a benchmark task needs them. Ask before adding substantial dependencies.
 - Record significant decisions in `docs/DECISIONS.md`: one short entry with context, choice and
   alternatives.
@@ -76,7 +79,7 @@ questions, then stop. When something is ambiguous, ask rather than guess.
 
 - [x] M0: scaffold, uv environment, pytest, linting, CLAUDE.md, DECISIONS.md, CI
 - [x] M1: workspace with `data_ref`; `load` and `inspect` for rasters and vectors; synthetic fixtures
-- [ ] M2: `validate` with geospatial invariants, each tested on passing and failing fixtures
+- [x] M2: `validate` with geospatial invariants, each tested on passing and failing fixtures
 - [ ] M3: `stac_search` and `preview`
 - [ ] M4: `run`, provenance sidecars, `lineage`
 - [ ] M5: MCP server, `.mcp.json`, hooks that run validation automatically, end-to-end check

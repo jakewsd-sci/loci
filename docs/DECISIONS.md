@@ -263,3 +263,100 @@ filtered by exact message: rioxarray uses affine's deprecated `*` operator inter
 deliberately provoke a warning filter it themselves.
 
 **Alternatives.** Default warning handling: quieter, but it lets regressions through.
+
+## D-018 validate returns a pass/warn/fail report with evidence (M2, 2026-10-23)
+
+**Context.** Agents and hooks need to act on validation results, and scientists need to see why a
+check concluded what it did.
+
+**Choice.** `validate` returns a `ValidationReport`: an overall status (the worst of its checks),
+counts, and one `CheckResult` per check. Each result has a stable id (`crs_defined`,
+`valid_fraction`, …), a status, the data_refs it concerns, a one-sentence message, the measured
+details it rests on, and a hint saying what to do whenever it is not a pass. The statuses mean:
+- **fail:** results built on this data are likely wrong.
+- **warn:** results may be biased or need a decision, so look before relying on them.
+- **pass:** the check found nothing.
+
+Data problems are reported, never raised. Only bad arguments raise errors.
+
+**Alternatives.** Booleans per check: no room for "look at this". Free-text reports: hard for an
+agent or a UI to act on.
+
+## D-019 Several data_refs mean "these will be combined" (M2, 2026-10-23)
+
+**Context.** The brief asks for CRS, extent and resolution consistency "across inputs that are
+combined", but `validate` cannot see the operation that will combine them.
+
+**Choice.** Passing several data_refs to one `validate` call states that they will be used
+together. They are then also checked against each other: `crs_consistent`, `extents_overlap` and,
+for two or more rasters, `resolution_consistent`. Different CRSs **fail**, because combining them
+without an explicit reprojection misplaces data. Different resolutions or misaligned grids **warn**,
+because resampling is legitimate once it is explicit and recorded. Extents compare bounding boxes in
+the first input's CRS: disjoint fails, and partial coverage of the smaller by the larger warns.
+
+**Alternatives.** An `operation=` argument naming the intended combination: more precise, but a
+vocabulary of operations to maintain before any benchmark needs it.
+
+## D-020 Valid-pixel fraction: below the threshold warns, none at all fails (M2, 2026-10-23)
+
+**Context.** The brief asks for a valid-pixel fraction "above a configurable threshold". The right
+threshold depends on the analysis. Clouds, coastlines and swath edges legitimately reduce coverage.
+
+**Choice.** `min_valid_fraction` defaults to 0.5. A band below it warns. A band with no valid pixels
+fails. For time stacks, every step is checked too, so two cloudy months warn even when the stack
+as a whole is fine. The check reads the same bounded sample as `inspect` and says when that sample
+is approximate.
+
+**Alternatives.** Failing below the threshold: blocks too often on legitimately sparse data, which
+would teach agents to ignore failures.
+
+## D-021 Value ranges for declared variables, and normalised indices recognised by name (M2, 2026-10-23)
+
+**Context.** "Values within a plausible range for the declared variable" needs a declaration
+mechanism and a table of ranges.
+
+**Choice.** `variables={"band_1": "reflectance"}` declares what a band or column holds. A small
+registry gives each variable a range and says whether going outside it fails or warns:
+- **fails:** normalised differences, fractions, slope and aspect, elevation and flow accumulation,
+  whose ranges are hard limits;
+- **warns:** reflectance and EVI, whose ranges are plausibility limits.
+
+NDVI, NDWI, NDMI, NBR, SAVI and EVI are recognised from band or column names alone, and the result
+says so. Ambiguous names (`slope`: degrees or percent?) are not guessed. Ranges apply to physical
+values (stored × scale + offset). A declared name that matches no band, or an unknown variable, is an
+error.
+
+**Alternatives.** Custom `(min, max)` ranges per call: flexible, but nothing needs them yet.
+Inferring more names: more automatic, but each guess is a chance to be confidently wrong.
+
+## D-022 Area conservation against an explicit reference layer (M2, 2026-10-23)
+
+**Context.** "Area conservation in overlays and dissolves" needs to know what the output should
+conserve. For a dissolve that is the input's total area. For a land-use × catchment overlay it is each
+catchment's area.
+
+**Choice.** `area_reference=<data_ref>` names the layer to compare against. With `area_by=<column>`,
+areas are compared per value of a column both layers share; otherwise totals are compared. Areas are
+computed in m²: geodesic for geographic CRSs, and planar with unit conversion for projected ones.
+Layers in different CRSs are not compared. The default tolerance is 0.01% relative. The result names
+the worst group.
+
+**Alternatives.** Inferring the reference from lineage (M4): attractive later. For now an explicit
+reference makes the claim being tested visible.
+
+## D-023 Temporal coverage judged against the median step (M2, 2026-10-23)
+
+**Context.** Series arrive daily, every 5 days or monthly, and the check should not need to be told
+which.
+
+**Choice.** Steps are compared with the series' median step:
+- a step longer than 1.5× the median is a gap;
+- a step under 0.5× the median is uneven sampling;
+- a repeated timestamp is flagged too.
+
+Any of these warns, and the result lists up to three gaps, largest first. Rasters are checked along
+`time`; vectors along a `time_column` the caller names. Steps are computed via `timedelta64[s]`,
+because pandas 3 may store timestamps in microseconds; a unit bug found by the tests.
+
+**Alternatives.** An expected interval argument: precise, but monthly steps vary from 28 to 31 days
+anyway, and the median handles that.
