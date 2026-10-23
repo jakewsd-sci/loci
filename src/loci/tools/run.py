@@ -74,6 +74,7 @@ def run(
     (run_dir / PARAMETERS_FILE).write_text(parameter_text)
     (run_dir / OUTPUTS_DIR).mkdir()
 
+    started_at = provenance.now()
     status, exit_code, stdout, stderr, seconds = _execute(ws, run_dir, timeout)
     (run_dir / "stdout.txt").write_text(stdout)
     (run_dir / "stderr.txt").write_text(stderr)
@@ -121,7 +122,8 @@ def run(
                 "code_sha256": context.code_sha256,
                 "inputs": declared,
                 "parameters": parameters or {},
-                "started_at": context.created_at,
+                "started_at": started_at,
+                "finished_at": context.created_at,
             },
             indent=2,
         )

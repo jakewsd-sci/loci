@@ -40,7 +40,8 @@ def test_a_script_reads_inputs_and_its_output_is_registered(ws: Workspace, ramp_
     doubled = ws.open(output.data_ref)
     assert isinstance(doubled, xr.Dataset)
     assert float(doubled["elevation"].max()) == 2 * syn.RAMP_MAX
-    assert Path(result.run_dir, "run.json").exists()
+    run_json = json.loads(Path(result.run_dir, "run.json").read_text())
+    assert run_json["started_at"] <= run_json["finished_at"]
 
 
 def test_outputs_carry_provenance_and_a_sidecar(ws: Workspace, ramp_tif: Path) -> None:

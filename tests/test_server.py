@@ -16,6 +16,7 @@ from mcp_types import CallToolResult, ImageContent, TextContent
 
 from loci.models import RefSummary, RunResult
 from loci.server import TOOLS, build_server, call
+from loci.tools.run import MAX_TIMEOUT
 from loci.workspace import Workspace
 
 type Session = Callable[[Client], Awaitable[Any]]
@@ -135,6 +136,9 @@ def test_project_config_starts_the_server_and_hook() -> None:
     pyproject = (root / "pyproject.toml").read_text()
 
     assert mcp["args"][-1] == "loci-mcp" and 'loci-mcp = "loci.server:main"' in pyproject
+    # Claude Code must wait longer than run's own limit, so a slow script ends with run's
+    # structured timeout instead of an abandoned call.
+    assert mcp["timeout"] > MAX_TIMEOUT * 1000
     assert hook_group["hooks"][0]["command"].endswith("loci-hook")
     assert 'loci-hook = "loci.hooks:main"' in pyproject
     assert settings["env"]["LOCI_VALIDATION_HOOK"] == "report"

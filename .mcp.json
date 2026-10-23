@@ -3,7 +3,8 @@
     "loci": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--quiet", "loci-mcp"]
+      "args": ["run", "--quiet", "loci-mcp"],
+      "timeout": 3660000
     }
   }
 }

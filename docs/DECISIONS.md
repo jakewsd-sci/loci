@@ -636,6 +636,9 @@ signature.
   shared.
 - The server's instructions give the agent the working rules: keep data in data_refs, pass
   assumptions on, validate before concluding, and read inputs only through `loci.script`.
+- `.mcp.json` sets the server's tool timeout to 61 minutes, just over `run`'s own limit. In a real
+  session, Claude Code abandoned an 85 s `run` after the 60 s that `MCP_TOOL_TIMEOUT` allowed in
+  that environment. The run then finished unseen while the agent retried.
 - `.mcp.json` starts it with `uv run --quiet loci-mcp`. Without `LOCI_WORKSPACE`, the workspace is
   `.loci/` in `$CLAUDE_PROJECT_DIR`, which Claude Code sets for MCP servers and hooks, so both
   share one workspace whatever their working directory.
