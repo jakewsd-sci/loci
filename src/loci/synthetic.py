@@ -5,6 +5,7 @@ small file and returns its path. The constants beside each writer are the answer
 All projected fixtures use WGS 84 / UTM zone 33N with their upper-left corner at ORIGIN.
 """
 
+from collections.abc import Iterable
 from pathlib import Path
 
 import geopandas as gpd
@@ -52,6 +53,22 @@ TS_STEPS = 12
 TS_START, TS_END = "2024-01-15", "2024-12-15"
 TS_MIN_STEP_DAYS, TS_MEDIAN_STEP_DAYS, TS_MAX_STEP_DAYS = 29.0, 31.0, 31.0
 
+# Cloudy stack: as the time stack, but in May and June only the top 2 of 10 rows are valid.
+CLOUDY_MONTHS = (5, 6)
+CLOUDY_VALID_FRACTION = 0.2
+
+# Gappy stack: April and August are missing, leaving two gaps of 61 and 62 days.
+GAPPY_MISSING_MONTHS = (4, 8)
+GAPPY_GAP_DAYS = (61.0, 62.0)
+
+# NDVI raster: values run from -0.2 to 0.8 across columns; the bad variant has a block of 1.2.
+NDVI_SIZE = 50
+NDVI_MIN, NDVI_MAX, NDVI_BAD = -0.2, 0.8, 1.2
+
+# Grid variants of the ramp: 20 m pixels, and 10 m pixels shifted half a pixel east.
+COARSE_RES = 20.0
+SHIFT_X = 5.0
+
 # Clean polygons: a 2 x 2 grid of 100 m squares.
 POLY_SIZE = 100.0
 POLY_AREA = POLY_SIZE**2
@@ -85,6 +102,7 @@ def _write_geotiff(
     descriptions: list[str] | None = None,
     block: int | None = None,
     overviews: tuple[int, ...] = (),
+    origin: tuple[float, float] = ORIGIN,
 ) -> Path:
     count, rows, cols = bands.shape
     profile: dict[str, object] = {
@@ -94,7 +112,7 @@ def _write_geotiff(
         "count": count,
         "dtype": bands.dtype.name,
         "crs": crs,
-        "transform": from_origin(*ORIGIN, res, res),
+        "transform": from_origin(*origin, res, res),
         "nodata": nodata,
     }
     if block is not None:
@@ -157,17 +175,63 @@ def write_overview_raster(path: Path) -> Path:
 
 
 def time_stack() -> xr.Dataset:
-    """Monthly NDVI stack with dims (time, y, x); step i holds the value 0.05 * (i + 1)."""
-    times = pd.date_range("2024-01-01", periods=TS_STEPS, freq="MS") + pd.Timedelta(days=14)
+    """Monthly NDVI stack with dims (time, y, x); the 15th of month m holds the value 0.05 * m."""
+    return _monthly_stack(range(1, TS_STEPS + 1))
+
+
+def cloudy_time_stack() -> xr.Dataset:
+    """The monthly stack with only the top 2 rows valid (the rest NaN) in CLOUDY_MONTHS."""
+    return _monthly_stack(range(1, TS_STEPS + 1), cloudy=CLOUDY_MONTHS)
+
+
+def gappy_time_stack() -> xr.Dataset:
+    """The monthly stack without GAPPY_MISSING_MONTHS."""
+    months = [m for m in range(1, TS_STEPS + 1) if m not in GAPPY_MISSING_MONTHS]
+    return _monthly_stack(months)
+
+
+def _monthly_stack(months: Iterable[int], cloudy: Iterable[int] = ()) -> xr.Dataset:
+    months = list(months)
+    times = pd.to_datetime([f"2024-{m:02d}-15" for m in months])
     x = ORIGIN[0] + 10.0 * (np.arange(TS_SIZE) + 0.5)
     y = ORIGIN[1] - 10.0 * (np.arange(TS_SIZE) + 0.5)
-    values = (0.05 * (np.arange(TS_STEPS) + 1))[:, None, None] * np.ones((TS_SIZE, TS_SIZE))
-    ndvi = xr.DataArray(
-        values.astype("float32"),
-        coords={"time": times, "y": y, "x": x},
-        dims=("time", "y", "x"),
+    values = (0.05 * np.array(months, dtype="float32"))[:, None, None] * np.ones(
+        (TS_SIZE, TS_SIZE), dtype="float32"
     )
-    return xr.Dataset({"ndvi": ndvi}).rio.write_crs(UTM33N)
+    valid_rows = round(CLOUDY_VALID_FRACTION * TS_SIZE)
+    for i, month in enumerate(months):
+        if month in set(cloudy):
+            values[i, valid_rows:] = np.nan
+    ndvi = xr.DataArray(values, coords={"time": times, "y": y, "x": x}, dims=("time", "y", "x"))
+    return xr.Dataset({"ndvi": ndvi.rio.write_nodata(np.nan)}).rio.write_crs(UTM33N)
+
+
+def write_ndvi_raster(path: Path, *, out_of_range: bool = False) -> Path:
+    """float32 band described 'ndvi', NaN nodata; values from NDVI_MIN to NDVI_MAX across columns.
+
+    With out_of_range, a 5 x 5 block in the centre holds NDVI_BAD.
+    """
+    values = np.tile(np.linspace(NDVI_MIN, NDVI_MAX, NDVI_SIZE, dtype="float32"), (NDVI_SIZE, 1))
+    if out_of_range:
+        centre = NDVI_SIZE // 2
+        values[centre : centre + 5, centre : centre + 5] = NDVI_BAD
+    return _write_geotiff(
+        path, values[None], crs=UTM33N, res=10.0, nodata=float("nan"), descriptions=["ndvi"]
+    )
+
+
+def write_coarse_raster(path: Path) -> Path:
+    """The ramp's footprint at COARSE_RES (20 m) pixels."""
+    rows, cols = round(RAMP_ROWS * RAMP_RES / COARSE_RES), round(RAMP_COLS * RAMP_RES / COARSE_RES)
+    ones = np.ones((1, rows, cols), dtype="float32")
+    return _write_geotiff(path, ones, crs=UTM33N, res=COARSE_RES, nodata=RAMP_NODATA)
+
+
+def write_shifted_raster(path: Path) -> Path:
+    """Like the ramp grid (10 m pixels) but with its origin SHIFT_X metres east: half a pixel."""
+    ones = np.ones((1, RAMP_ROWS, RAMP_COLS), dtype="float32")
+    origin = (ORIGIN[0] + SHIFT_X, ORIGIN[1])
+    return _write_geotiff(path, ones, crs=UTM33N, res=RAMP_RES, nodata=RAMP_NODATA, origin=origin)
 
 
 def polygons() -> gpd.GeoDataFrame:

@@ -87,3 +87,23 @@ def points_blank_csv(fixture_dir: Path) -> Path:
 @pytest.fixture(scope="session")
 def wide_csv(fixture_dir: Path) -> Path:
     return synthetic.write_wide_csv(fixture_dir / "wide.csv")
+
+
+@pytest.fixture(scope="session")
+def ndvi_tif(fixture_dir: Path) -> Path:
+    return synthetic.write_ndvi_raster(fixture_dir / "ndvi.tif")
+
+
+@pytest.fixture(scope="session")
+def bad_ndvi_tif(fixture_dir: Path) -> Path:
+    return synthetic.write_ndvi_raster(fixture_dir / "ndvi_bad.tif", out_of_range=True)
+
+
+@pytest.fixture(scope="session")
+def coarse_tif(fixture_dir: Path) -> Path:
+    return synthetic.write_coarse_raster(fixture_dir / "coarse.tif")
+
+
+@pytest.fixture(scope="session")
+def shifted_tif(fixture_dir: Path) -> Path:
+    return synthetic.write_shifted_raster(fixture_dir / "shifted.tif")

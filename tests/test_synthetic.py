@@ -100,3 +100,36 @@ def test_point_tables_match_known_answers(
 
     wide = pd.read_csv(wide_csv)
     assert wide.shape[1] == 2 + syn.WIDE_NUMERIC_COLUMNS + syn.WIDE_TEXT_COLUMNS
+
+
+def test_cloudy_stack_has_known_valid_fractions() -> None:
+    ds = syn.cloudy_time_stack()
+    valid = np.isfinite(ds["ndvi"].values).mean(axis=(1, 2))
+    months = pd.DatetimeIndex(ds["time"].values).month
+
+    for month, fraction in zip(months, valid, strict=True):
+        expected = syn.CLOUDY_VALID_FRACTION if month in syn.CLOUDY_MONTHS else 1.0
+        assert fraction == pytest.approx(expected)
+
+
+def test_gappy_stack_has_known_gaps() -> None:
+    times = pd.DatetimeIndex(syn.gappy_time_stack()["time"].values)
+    steps = np.diff(times).astype("timedelta64[D]").astype(float)
+
+    assert sorted(steps[steps > 45]) == list(syn.GAPPY_GAP_DAYS)
+
+
+def test_ndvi_rasters_match_known_answers(ndvi_tif: Path, bad_ndvi_tif: Path) -> None:
+    with rasterio.open(ndvi_tif) as good, rasterio.open(bad_ndvi_tif) as bad:
+        assert good.descriptions == ("ndvi",)
+        assert (good.read(1).min(), good.read(1).max()) == pytest.approx(
+            (syn.NDVI_MIN, syn.NDVI_MAX)
+        )
+        assert bad.read(1).max() == pytest.approx(syn.NDVI_BAD)
+
+
+def test_grid_variants_match_known_answers(coarse_tif: Path, shifted_tif: Path) -> None:
+    with rasterio.open(coarse_tif) as coarse, rasterio.open(shifted_tif) as shifted:
+        assert coarse.res == (syn.COARSE_RES, syn.COARSE_RES)
+        assert coarse.bounds.right == syn.ORIGIN[0] + syn.RAMP_COLS * syn.RAMP_RES
+        assert shifted.bounds.left == syn.ORIGIN[0] + syn.SHIFT_X

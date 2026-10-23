@@ -65,11 +65,17 @@ def plan_stats(ds: xr.Dataset, max_pixels: int = DEFAULT_MAX_PIXELS) -> StatsSou
     return StatsSource(sample, "strided", step)
 
 
-def band_stats(values: np.ndarray, nodata: float | None) -> BandStats:
-    """Statistics over valid pixels: finite and not equal to nodata."""
+def valid_mask(values: np.ndarray, nodata: float | None) -> np.ndarray:
+    """True where a pixel is valid: finite and not equal to nodata."""
     valid = np.isfinite(values)
     if nodata is not None and not math.isnan(nodata):
         valid &= values != nodata
+    return valid
+
+
+def band_stats(values: np.ndarray, nodata: float | None) -> BandStats:
+    """Statistics over valid pixels: finite and not equal to nodata."""
+    valid = valid_mask(values, nodata)
     count = int(valid.sum())
     fraction = sig(count / values.size) if values.size else 0.0
     if count == 0:
