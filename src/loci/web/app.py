@@ -8,35 +8,58 @@ blocking work in a thread so map tiles keep flowing while a script runs.
 """
 
 import argparse
+import hashlib
+import json
 import os
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+import anyio
 import uvicorn
 from pydantic import BaseModel
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from loci import provenance
 from loci.errors import LociError, UnknownRefError
 from loci.tools.lineage import lineage
+from loci.tools.run import run
 from loci.tools.validate import validate
-from loci.web import layers
+from loci.web import layers, project
+from loci.web.agent import DEFAULT_MODEL, MODELS, Agent
 from loci.workspace import Workspace
 
 DEFAULT_PORT = 8765
 DIST_ENV = "LOCI_APP_DIST"
 EMPTY_TILE = Response(status_code=204)
+EVENT_INTERVAL = 1.0  # seconds between checks for workspace changes
 
 
-def create_app(ws: Workspace, *, dist: Path | None = None) -> Starlette:
-    """The Starlette app for one workspace; `dist` is the built web app to serve, if any."""
+def create_app(
+    ws: Workspace,
+    *,
+    project_dir: Path | None = None,
+    dist: Path | None = None,
+    agent: Agent | None = None,
+) -> Starlette:
+    """The Starlette app for one workspace.
+
+    `project_dir` holds analysis/ (default: the workspace's parent folder), `dist` is the built
+    web app to serve, and `agent` answers chat messages (default: Claude over the loci tools).
+    """
     routes: list[Route | Mount] = [
+        Route("/api/project", _project),
+        Route("/api/events", _events),
+        Route("/api/models", _models),
+        Route("/api/agent", _agent, methods=["POST"]),
+        Route("/api/scripts", _list_scripts),
+        Route("/api/scripts/{path:path}", _script, methods=["GET", "PUT"]),
+        Route("/api/run", _run, methods=["POST"]),
         Route("/api/layers", _list_layers),
         Route("/api/layers/{ref}", _layer_detail),
         Route("/api/layers/{ref}/display", _layer_display),
@@ -53,6 +76,8 @@ def create_app(ws: Workspace, *, dist: Path | None = None) -> Starlette:
         exception_handlers={UnknownRefError: _not_found, LociError: _bad_request},
     )
     app.state.ws = ws
+    app.state.project = (project_dir or ws.root.parent).resolve()
+    app.state.agent = agent or Agent(ws)
     return app
 
 
@@ -138,6 +163,104 @@ async def _preview_file(request: Request) -> Response:
     return FileResponse(path, media_type="image/png")
 
 
+async def _project(request: Request) -> Response:
+    return JSONResponse(
+        {
+            "project": str(request.app.state.project),
+            "workspace": str(_ws(request).root),
+            "scripts": project.SCRIPTS_DIR,
+        }
+    )
+
+
+async def _events(request: Request) -> Response:
+    """Server-sent events: `layers` whenever data_refs or their records change.
+
+    ?once=1 sends the current state and ends, which tests and scripts use.
+    """
+    ws, once = _ws(request), request.query_params.get("once") == "1"
+
+    async def stream() -> AsyncIterator[str]:
+        last = None
+        while True:
+            current = await run_in_threadpool(workspace_fingerprint, ws)
+            if current != last:
+                yield f"event: layers\ndata: {json.dumps({'fingerprint': current})}\n\n"
+                last = current
+            if once or await request.is_disconnected():
+                return
+            await anyio.sleep(EVENT_INTERVAL)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+def workspace_fingerprint(ws: Workspace) -> str:
+    """Changes whenever a data_ref is added or removed, or its provenance is updated."""
+    files = sorted([*ws.refs_dir.glob("*.json"), *ws.provenance_dir.glob("*.json")])
+    digest = hashlib.sha256()
+    for file in files:
+        digest.update(f"{file.name}:{file.stat().st_mtime_ns};".encode())
+    return digest.hexdigest()[:16]
+
+
+async def _models(request: Request) -> Response:
+    return JSONResponse({"models": MODELS, "default": DEFAULT_MODEL})
+
+
+async def _agent(request: Request) -> Response:
+    """One chat message, answered as a stream of server-sent events (see loci.web.agent)."""
+    body = await _body(request)
+    message = str(body.get("message", "")).strip()
+    if not message:
+        raise LociError("Send a message for the agent.")
+    agent: Agent = request.app.state.agent
+    events = agent.send(
+        message,
+        model=str(body.get("model") or DEFAULT_MODEL),
+        session_id=body.get("session_id") or None,
+    )
+
+    async def stream() -> AsyncIterator[str]:
+        async for event in events:
+            yield f"data: {json.dumps(event, default=str)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+async def _list_scripts(request: Request) -> Response:
+    return await _json(lambda: project.scripts(request.app.state.project))
+
+
+async def _script(request: Request) -> Response:
+    root, path = request.app.state.project, request.path_params["path"]
+    if request.method == "PUT":
+        content = str((await _body(request)).get("content", ""))
+        return await _json(lambda: project.write_script(root, path, content))
+    return await _json(lambda: project.read_script(root, path))
+
+
+async def _run(request: Request) -> Response:
+    """Run a project script with declared inputs, as the run tool does."""
+    ws, root, body = _ws(request), request.app.state.project, await _body(request)
+    script = project.script_path(root, str(body.get("path", "")))
+    inputs = body.get("inputs") or {}
+    parameters = body.get("parameters") or None
+    timeout = float(body.get("timeout") or 600)
+    return await _json(
+        lambda: run(ws, path=str(script), inputs=inputs, parameters=parameters, timeout=timeout)
+    )
+
+
+async def _body(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except ValueError as e:
+        raise LociError("The request body must be JSON.") from e
+    if not isinstance(body, dict):
+        raise LociError("The request body must be a JSON object.")
+    return body
+
+
 def _bands(value: str | None) -> list[str] | None:
     return [b for b in value.split(",") if b] if value else None
 
@@ -166,11 +289,12 @@ def default_dist() -> Path:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="loci-app", description="The loci map interface.")
     parser.add_argument("--workspace", type=Path, help="workspace folder (default: .loci)")
+    parser.add_argument("--project", type=Path, help="project folder with analysis/")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args(argv)
     ws = Workspace(args.workspace) if args.workspace else Workspace.from_env()
-    app = create_app(ws, dist=default_dist())
+    app = create_app(ws, project_dir=args.project, dist=default_dist())
     print(f"loci: workspace {ws.root}; open http://{args.host}:{args.port}", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
