@@ -154,8 +154,8 @@ def raster_notes(summary: RasterSummary) -> list[str]:
     notes = []
     if summary.stats_method == "overview":
         notes.append(
-            f"Statistics come from an overview stored in the file, at 1/{summary.stats_decimation}"
-            " resolution, so extremes and valid fractions are approximate."
+            f"Statistics come from overviews at 1/{summary.stats_decimation} resolution, so "
+            "extremes and valid fractions are approximate."
         )
     elif summary.stats_method == "strided":
         notes.append(

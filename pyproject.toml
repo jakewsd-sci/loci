@@ -64,4 +64,7 @@ filterwarnings = [
     "ignore:Use `@` matmul instead of `\\*` mul operator:PendingDeprecationWarning",
     # odc-geo uses shapely's deprecated ops.transform internally.
     "ignore:The 'shapely.ops.transform\\(\\)' function is deprecated:DeprecationWarning",
+    # odc-loader's coarse (overview) reads warp from a dataset opened without its transform and
+    # supply the transform explicitly; tests confirm the values. loci never relies on it.
+    "ignore:Dataset has no geotransform, gcps, or rpcs:rasterio.errors.NotGeoreferencedWarning",
 ]

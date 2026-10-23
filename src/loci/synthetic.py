@@ -406,7 +406,13 @@ def stac_items(directory: Path, *, offsets: Iterable[float] | None = None) -> li
         )
         for name, (values, res) in bands.items():
             path = _write_geotiff(
-                directory / f"{item.id}_{name}.tif", values[None], crs=UTM33N, res=res, nodata=0
+                directory / f"{item.id}_{name}.tif",
+                values[None],
+                crs=UTM33N,
+                res=res,
+                nodata=0,
+                block=16,
+                overviews=(2, 4),  # like real COGs, so coarse reads use them
             )
             raster: dict[str, object] = {
                 "nodata": 0,

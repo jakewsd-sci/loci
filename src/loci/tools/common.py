@@ -5,7 +5,7 @@ import rasterio
 import xarray as xr
 
 from loci.errors import LoadError
-from loci.io import Data
+from loci.io import STAC_RASTER, Data, read
 from loci.io.raster import open_raster, overview_factors
 from loci.models import RasterSummary, RefSummary, VectorSummary
 from loci.summary.raster import (
@@ -54,11 +54,27 @@ def stats_source(record: RefRecord, ds: xr.Dataset, max_pixels: int) -> StatsSou
     one, because reading it costs a fraction of the I/O.
     """
     needed = decimation_for(ds, max_pixels)
-    if needed > 1 and "time" not in ds.dims:
-        overview = _overview(record, needed)
-        if overview is not None:
-            return overview
+    if needed > 1:
+        if record.source.format == STAC_RASTER.name:
+            coarse = _coarser_stac(record, needed)
+            if coarse is not None:
+                return coarse
+        elif "time" not in ds.dims:
+            overview = _overview(record, needed)
+            if overview is not None:
+                return overview
     return plan_stats(ds, max_pixels)
+
+
+def _coarser_stac(record: RefRecord, factor: int) -> StatsSource | None:
+    """The STAC load re-read at `factor` times its resolution; GDAL serves it from overviews."""
+    options = record.source.options
+    if options.resolution is None:
+        return None
+    coarser = options.model_copy(update={"resolution": options.resolution * factor})
+    ds = read(record.source.uri, STAC_RASTER, coarser).data
+    assert isinstance(ds, xr.Dataset)
+    return StatsSource(ds, "overview", factor)
 
 
 def _overview(record: RefRecord, needed: int) -> StatsSource | None:
