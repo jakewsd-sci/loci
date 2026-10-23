@@ -130,10 +130,19 @@ def _describe(record: Provenance) -> str:
     if parent is not None:
         return (
             f"load of bands {parameters.get('bands')} from {len(parent.stac_items)} STAC items "
-            f"found by {parent.data_ref}."
+            f"found by {parent.data_ref}{_chosen(record)}."
         )
     source = next((i.uri for i in record.inputs if i.uri), None)
-    return f"load of {source}."
+    return f"load of {source}{_chosen(record)}."
+
+
+def _chosen(record: Provenance) -> str:
+    """Options the caller set explicitly, such as crs= or drop_offset=, which change the data."""
+    arguments = record.call.get("arguments")
+    if not isinstance(arguments, dict):
+        return ""
+    chosen = [f"{k}={v!r}" for k, v in arguments.items() if k not in {"uri", "kind", "bands"}]
+    return f", with {', '.join(chosen)}" if chosen else ""
 
 
 def _stac_items(ws: Workspace, steps: list[LineageStep], own: Provenance | None) -> list[str]:

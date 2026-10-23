@@ -560,6 +560,8 @@ path the easy one; they do not enforce it.
 data_refs breadth-first.
 - Each step names what produced it, gives a one-line description, and lists its parents, its
   outside sources, its STAC item count and its latest validation status.
+- Load steps name the options the caller set (for example `drop_offset=True` or an assigned
+  `crs=`), because they change the data.
 - `original_sources` gathers every outside URI. STAC item IDs are gathered across steps; the first
   10 are listed alongside the total.
 - Changed sources and ancestors missing from the workspace are warnings. Records from before M4
@@ -586,6 +588,10 @@ same steps.
   `script.warn()`, and `run` returns that warning in its result.
 - A test runs the same NDVI with and without `physical()`. With it, the result is the known answer;
   without it, the result is wrong (the offset is ignored) and the run is flagged.
+
+Over Sydney, the same script on raw bands also shows why `physical()` is the default path. The
+bands are uint16, so `nir - red` wraps around over water, and "NDVI" reaches 21,845. `run`
+validates its outputs, so it fails that one and says why.
 
 **Alternatives.**
 - Clearing attributes globally with `xr.set_options(keep_attrs=False)`: it hides the symptom for

@@ -62,7 +62,7 @@ def test_a_stac_analysis_traces_to_the_catalogue_and_its_items(
     search = stac_search(
         ws, bbox=list(stac_scenes[0].bbox or []), start="2024-03-01", end="2024-03-31"
     )
-    stack = load(ws, search.data_ref, bands=["red"]).data_ref
+    stack = load(ws, search.data_ref, bands=["red"], drop_offset=True).data_ref
     median = run(ws, code=MEDIAN, inputs={"stack": stack}).outputs[0].data_ref
     assert median is not None
 
@@ -70,7 +70,8 @@ def test_a_stac_analysis_traces_to_the_catalogue_and_its_items(
 
     assert [s.produced_by for s in result.steps] == ["run", "load", "stac_search"]
     assert result.steps[1].description == (
-        f"load of bands ['red'] from 3 STAC items found by {search.data_ref}."
+        f"load of bands ['red'] from 3 STAC items found by {search.data_ref}, "
+        "with drop_offset=True."
     )
     assert result.steps[2].description.startswith("stac_search of sentinel-2-l2a in https://")
     assert result.original_sources == ["https://earth-search.aws.element84.com/v1"]
@@ -93,6 +94,14 @@ def test_files_written_by_a_run_trace_through_their_sidecar(ws: Workspace, ramp_
     assert traced.file == str(stats) and traced.data_ref is None
     assert [s.produced_by for s in traced.steps] == ["run", "load"]
     assert traced.original_sources == [str(ramp_tif)]
+
+
+def test_options_that_change_the_data_show_in_the_description(
+    ws: Workspace, bare_tif: Path
+) -> None:
+    ref = load(ws, str(bare_tif), crs="EPSG:32633").data_ref
+
+    assert lineage(ws, ref).steps[0].description == f"load of {bare_tif}, with crs='EPSG:32633'."
 
 
 def test_validation_status_shows_on_each_step(ws: Workspace, bare_tif: Path) -> None:

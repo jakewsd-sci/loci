@@ -13,9 +13,10 @@ lists everything the script read through loci. Anything saved under outputs/ is 
 the run succeeds.
 
 Compute on physical values: script.physical(stack["red"]) masks nodata, applies scale and offset,
-and drops those attributes. xarray carries attributes through arithmetic, so a ratio of raw bands
-would otherwise inherit their scale_factor; save() never writes inherited scaling for float bands
-and records a warning when it drops one.
+and drops those attributes. Raw bands are unsigned integers, so nir - red wraps around wherever red
+is brighter; and xarray carries attributes through arithmetic, so a ratio of raw bands would
+inherit their scale_factor. save() never writes inherited scaling for float bands and records a
+warning when it drops one.
 """
 
 import json
