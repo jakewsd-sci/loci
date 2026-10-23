@@ -1,10 +1,12 @@
 import json
+import math
 
 import pytest
 from pydantic import ValidationError
 
 from loci.errors import LociError, UnknownRefError
 from loci.models import (
+    BandSummary,
     CRSInfo,
     Extent,
     InvalidGeometries,
@@ -57,6 +59,16 @@ def test_ref_summary_json_is_plain() -> None:
 
     assert data["summary"]["extent"]["bounds"] == [0.0, 0.0, 10.0, 10.0]
     assert data["warnings"] == []
+
+
+def test_nan_nodata_survives_json_as_a_string() -> None:
+    band = BandSummary(name="b", dtype="float32", nodata=float("nan"))
+
+    data = json.loads(band.model_dump_json())
+    restored = BandSummary.model_validate_json(band.model_dump_json())
+
+    assert data["nodata"] == "NaN"
+    assert restored.nodata is not None and math.isnan(restored.nodata)
 
 
 def test_models_reject_unknown_fields() -> None:

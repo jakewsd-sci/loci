@@ -5,8 +5,10 @@ map-based UI later. Change them deliberately and record why in docs/DECISIONS.md
 
 Conventions:
 - Bounds are (minx, miny, maxx, maxy). In WGS 84 that is (west, south, east, north) in degrees.
-- Floats are rounded to 6 significant figures; full precision lives in the data, not the summary.
-- None means "not applicable" or "not computed", never zero.
+- Statistics are rounded to 6 significant figures and coordinates to 6 decimal places; full
+  precision lives in the data, not the summary.
+- None means "not applicable" or "not computed", never zero. NaN and infinity serialise as the
+  strings "NaN" and "Infinity", so a NaN nodata value is not mistaken for "no nodata".
 """
 
 from typing import Annotated, Literal
@@ -28,7 +30,7 @@ Bounds = tuple[float, float, float, float]
 
 
 class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, ser_json_inf_nan="strings")
 
 
 class ReadOptions(_Model):
@@ -65,9 +67,16 @@ class BandStats(_Model):
 
 
 class BandSummary(_Model):
+    """One band. Values and stats are as stored; physical value = stored * scale + offset.
+
+    scale and offset are None when the file declares none (equivalent to 1 and 0).
+    """
+
     name: str
     dtype: str
     nodata: float | None
+    scale: float | None = None
+    offset: float | None = None
     stats: BandStats | None = None
 
 
