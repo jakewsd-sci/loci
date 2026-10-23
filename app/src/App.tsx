@@ -268,7 +268,7 @@ export function App() {
             ))}
           </select>
         </div>
-        <AgentPanel open={tab === "agent"} model={model} selected={chosen} point={point} onRef={selectRef} />
+        <AgentPanel open={tab === "agent"} model={model} layers={layers} selected={chosen} point={point} onRef={selectRef} />
         <CodePanel open={tab === "code"} layers={layers} request={scriptRequest} onRef={selectRef} />
         <LineagePanel
           open={tab === "lineage"}

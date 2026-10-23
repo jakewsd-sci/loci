@@ -186,8 +186,14 @@ def tile(
         if not src.tile_exists(x, y, z):
             return None
         image = src.tile(x, y, z, tilesize=256, indexes=indexes, unscale=True)
+    if np.issubdtype(image.array.dtype, np.floating):
+        # NaN is missing data even when the file declares no nodata value: draw it transparent.
+        image.array.mask = np.ma.getmaskarray(image.array) | np.isnan(image.array.data)
     if stretch is not None:
-        image.rescale(in_range=[stretch] * len(indexes))
+        low, high = stretch
+        if high <= low:  # a constant layer: draw it in the middle of the colour scale
+            low, high = low - 1, high + 1
+        image.rescale(in_range=[(low, high)] * len(indexes))
     colormap = cmap.get("viridis") if len(indexes) == 1 else None
     return image.render(img_format="PNG", colormap=colormap)
 

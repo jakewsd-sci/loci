@@ -4,9 +4,13 @@ import json
 from pathlib import Path
 
 import morecantile
+import numpy as np
 import pystac
 import pytest
+import rasterio
 from pyproj import Transformer
+from rasterio.io import MemoryFile
+from rasterio.transform import from_origin
 from starlette.testclient import TestClient
 
 from loci import synthetic as syn
@@ -65,6 +69,40 @@ def test_rasters_from_files_are_tiled_with_a_physical_stretch(
     png = client.get(tile_url)
     assert png.status_code == 200 and png.content.startswith(b"\x89PNG")
     assert client.get(far_url).status_code == 204
+
+
+def test_nan_pixels_are_transparent_even_without_a_declared_nodata(
+    client: TestClient, ws: Workspace, tmp_path: Path
+) -> None:
+    values = np.ones((1, 20, 20), dtype="float32")
+    values[0, :, :10] = np.nan  # the west half is missing
+    path = tmp_path / "half.tif"
+    profile = {"driver": "GTiff", "width": 20, "height": 20, "count": 1, "dtype": "float32"}
+    transform = from_origin(*syn.ORIGIN, 10, 10)
+    with rasterio.open(path, "w", **profile, crs=syn.UTM33N, transform=transform) as dst:
+        dst.write(values)
+    ref = load(ws, str(path)).data_ref
+    shown = client.get(f"/api/layers/{ref}/display").json()
+    west, east = (
+        _lonlat(syn.ORIGIN[0] + 25, syn.ORIGIN[1] - 100),
+        _lonlat(syn.ORIGIN[0] + 175, syn.ORIGIN[1] - 100),
+    )
+
+    def alpha(lon: float, lat: float) -> int:
+        tile = TMS.tile(lon, lat, 18)
+        png = client.get(shown["url"].format(z=18, x=tile.x, y=tile.y)).content
+        with MemoryFile(png) as memory, memory.open() as image:
+            row, col = image.index(*_pixel_in_tile(tile, lon, lat))
+            return int(image.read(image.count)[row, col])
+
+    assert alpha(*west) == 0 and alpha(*east) == 255
+
+
+def _pixel_in_tile(tile: morecantile.Tile, lon: float, lat: float) -> tuple[float, float]:
+    """The point's position in a 256-pixel tile image, as image (x, y) coordinates."""
+    left, bottom, right, top = TMS.xy_bounds(tile)
+    x, y = TMS.xy(lon, lat)
+    return (x - left) / (right - left) * 256, (top - y) / (top - bottom) * 256
 
 
 def test_stac_stacks_are_one_georeferenced_preview(

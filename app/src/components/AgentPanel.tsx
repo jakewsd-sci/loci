@@ -22,6 +22,7 @@ type Item =
 interface Props {
   open: boolean;
   model: string;
+  layers: LayerInfo[];
   selected: LayerInfo | null;
   point: [number, number] | null;
   onRef: (ref: string) => void;
@@ -45,10 +46,10 @@ function summarise(name: string, input: Record<string, unknown>): string {
       return `${base(input.uri)}${bands}`;
     }
     case "run": {
-      const firstLine = String(input.code ?? "")
-        .split("\n")
-        .find((l) => l.trim() && !l.startsWith("import") && !l.startsWith("from"));
-      return input.path ? base(input.path) ?? "" : firstLine ?? "script";
+      const lines = String(input.code ?? "").split("\n").filter((l) => l.trim()).length;
+      const names = Object.keys((input.inputs as Record<string, string> | undefined) ?? {});
+      const what = input.path ? base(input.path) ?? "" : `inline script, ${lines} lines`;
+      return names.length ? `${what} · inputs ${names.join(", ")}` : what;
     }
     case "validate":
       return (input.data_refs as string[] | undefined)?.join(", ") ?? "";
@@ -131,7 +132,20 @@ function apply(items: Item[], event: AgentEvent): Item[] {
   }
 }
 
-export function AgentPanel({ open, model, selected, point, onRef }: Props) {
+const MAX_LISTED = 25;
+
+/** What the map shows, so the agent can refer to layers without searching for them. */
+function mapContext(layers: LayerInfo[]): string {
+  if (!layers.length) return "The map has no layers yet.";
+  const listed = layers
+    .slice(0, MAX_LISTED)
+    .map((l) => `${l.name} (${l.data_ref}, ${l.validation ?? "not checked"})`)
+    .join("; ");
+  const more = layers.length > MAX_LISTED ? `; and ${layers.length - MAX_LISTED} more` : "";
+  return `Layers on the map, newest first: ${listed}${more}.`;
+}
+
+export function AgentPanel({ open, model, layers, selected, point, onRef }: Props) {
   const [items, setItems] = useState<Item[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -147,7 +161,7 @@ export function AgentPanel({ open, model, selected, point, onRef }: Props) {
   async function send(text: string) {
     const message = text.trim();
     if (!message || busy) return;
-    const context: string[] = [];
+    const context: string[] = [mapContext(layers)];
     if (attach && selected) context.push(`Selected on the map: ${selected.name} (${selected.data_ref}).`);
     if (attach && point) context.push(`Point clicked on the map: lon ${point[0].toFixed(5)}, lat ${point[1].toFixed(5)}.`);
     setItems((it) => [...it, { kind: "user", text: message }]);
