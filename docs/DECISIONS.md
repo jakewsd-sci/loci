@@ -752,6 +752,20 @@ Task 1 starts from a STAC search made by the real `stac_search`, with the catalo
 synthetic scenes; the patch lives only in the benchmark. Agent runs cost model usage and vary from
 run to run, so they are not in CI; `--repeat` measures the spread.
 
+**Baseline (2026-10-23).**
+- Reference mode scored 5/5.
+- Agent mode, one attempt per task, also scored 5/5, and every reply named its trap. Each task
+  took 4 to 6 turns, 17 to 31 s and $0.08 to $0.11 ($0.49 in all).
+
+Three things stand out:
+- The tasks are too easy to tell one setup from another.
+- No session called `validate`, `inspect`, `preview` or `lineage`; they used only `load` and
+  `run`. The hook validates each new data_ref on its own, so the checks that compare inputs (CRS
+  consistency, overlap) never ran. The agent's own knowledge caught those traps.
+- In forest-area the agent called UTM "more accurate" than an equal-area projection. Here it is
+  the other way round, because UTM's scale factor shrinks areas by 0.08%. The answer was still
+  within tolerance, so the score missed a wrong reason.
+
 **Alternatives.**
 - Real data with judged answers: realistic, but it cannot be scored exactly.
 - Scripted answers only: deterministic, but they say nothing about the agent.

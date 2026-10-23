@@ -106,4 +106,4 @@ questions, then stop. When something is ambiguous, ask rather than guess.
 - [x] M3: `stac_search` and `preview`
 - [x] M4: `run`, provenance sidecars, `lineage`
 - [x] M5: MCP server, `.mcp.json`, hooks that run validation automatically, end-to-end check
-- [ ] M6: five benchmark tasks and `benchmarks/run.py`
+- [x] M6: five benchmark tasks and `benchmarks/run.py`
