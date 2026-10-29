@@ -458,3 +458,18 @@ def test_keys_pasted_in_the_app_are_saved_but_never_sent_back(
     assert (tmp_path / "settings" / "keys.toml").exists()
     assert not {p["id"]: p for p in forgotten.json()["providers"]}["openai"]["configured"]
     assert unknown.status_code == 400 and malformed.status_code == 400
+
+
+def test_a_script_with_windows_line_ends_has_not_changed_since_it_ran(
+    ws: Workspace, project: Path, ramp_tif: Path
+) -> None:
+    script = project / "analysis" / "double.py"
+    script.parent.mkdir()
+    script.write_bytes(DOUBLE.replace("\n", "\r\n").encode())  # as saved on Windows
+    client = _client(ws, project)
+    dem = load(ws, str(ramp_tif)).data_ref
+
+    result = client.post("/api/run", json={"path": "analysis/double.py", "inputs": {"dem": dem}})
+    ref = result.json()["outputs"][0]["data_ref"]
+
+    assert client.get(f"/api/layers/{ref}").json()["script"]["changed"] is False

@@ -98,7 +98,8 @@ def script_link(project: Path, record: Provenance) -> ScriptLink | None:
     folder = (project / SCRIPTS_DIR).resolve()
     if file is None or file.suffix != ".py" or not file.is_relative_to(folder):
         return ScriptLink(run_id=record.run_id, path=None, changed=False)
-    current = provenance.sha256_file(file) if file.exists() else None
+    # Compared as text, as run read it: on Windows the file on disk may have \r\n line ends.
+    current = provenance.sha256_text(file.read_text(encoding="utf-8")) if file.exists() else None
     return ScriptLink(
         run_id=record.run_id,
         path=file.relative_to(project.resolve()).as_posix(),
