@@ -31,7 +31,7 @@ from loci.tools.lineage import lineage
 from loci.tools.run import run
 from loci.tools.validate import validate
 from loci.web import layers, project
-from loci.web.agent import DEFAULT_MODEL, MODELS, Agent
+from loci.web.agent import DEFAULT_MODEL, DEFAULT_REVIEW, MODELS, Agent
 from loci.workspace import Workspace
 
 DEFAULT_PORT = 8765
@@ -57,6 +57,8 @@ def create_app(
         Route("/api/events", _events),
         Route("/api/models", _models),
         Route("/api/agent", _agent, methods=["POST"]),
+        Route("/api/agent/decide", _decide, methods=["POST"]),
+        Route("/api/runs/{run_id}/script", _run_script),
         Route("/api/scripts", _list_scripts),
         Route("/api/scripts/{path:path}", _script, methods=["GET", "PUT"]),
         Route("/api/run", _run, methods=["POST"]),
@@ -77,7 +79,7 @@ def create_app(
     )
     app.state.ws = ws
     app.state.project = (project_dir or ws.root.parent).resolve()
-    app.state.agent = agent or Agent(ws)
+    app.state.agent = agent or Agent(ws, project=app.state.project)
     return app
 
 
@@ -105,12 +107,14 @@ async def _layer_detail(request: Request) -> Response:
 
     def detail() -> dict[str, Any]:
         record = provenance.read(ws, ref)
+        link = project.script_link(request.app.state.project, record) if record else None
         return {
             "layer": layers.layer_info(ws, ws.record(ref)).model_dump(mode="json"),
             "lineage": lineage(ws, ref).model_dump(mode="json"),
             "validation": record.validation.model_dump(mode="json")
             if record and record.validation
             else None,
+            "script": link.model_dump(mode="json") if link else None,
         }
 
     return await _json(detail)
@@ -185,19 +189,25 @@ async def _project(request: Request) -> Response:
 
 
 async def _events(request: Request) -> Response:
-    """Server-sent events: `layers` whenever data_refs or their records change.
+    """Server-sent events: `layers` whenever data_refs or their records change, and `scripts`
+    whenever a script under analysis/ is added, removed or saved (by the agent too).
 
     ?once=1 sends the current state and ends, which tests and scripts use.
     """
     ws, once = _ws(request), request.query_params.get("once") == "1"
+    folder: Path = request.app.state.project
 
     async def stream() -> AsyncIterator[str]:
-        last = None
+        last: dict[str, str] = {}
         while True:
-            current = await run_in_threadpool(workspace_fingerprint, ws)
-            if current != last:
-                yield f"event: layers\ndata: {json.dumps({'fingerprint': current})}\n\n"
-                last = current
+            current = {
+                "layers": await run_in_threadpool(workspace_fingerprint, ws),
+                "scripts": await run_in_threadpool(project.scripts_fingerprint, folder),
+            }
+            for kind, value in current.items():
+                if last.get(kind) != value:
+                    yield f"event: {kind}\ndata: {json.dumps({'fingerprint': value})}\n\n"
+            last = current
             if once or await request.is_disconnected():
                 return
             await anyio.sleep(EVENT_INTERVAL)
@@ -229,6 +239,7 @@ async def _agent(request: Request) -> Response:
         message,
         model=str(body.get("model") or DEFAULT_MODEL),
         session_id=body.get("session_id") or None,
+        review=str(body.get("review") or DEFAULT_REVIEW),
     )
 
     async def stream() -> AsyncIterator[str]:
@@ -236,6 +247,23 @@ async def _agent(request: Request) -> Response:
             yield f"data: {json.dumps(event, default=str)}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+async def _decide(request: Request) -> Response:
+    """The scientist's answer to a change or run the agent is waiting on."""
+    body = await _body(request)
+    agent: Agent = request.app.state.agent
+    accepted = body.get("accepted")
+    if not isinstance(accepted, bool):
+        raise LociError("Answer with accepted: true or false.")
+    if not agent.decide(str(body.get("id", "")), accepted, str(body.get("note") or "")):
+        return JSONResponse({"error": "Nothing is waiting for that answer."}, status_code=404)
+    return JSONResponse({"id": body["id"], "accepted": accepted})
+
+
+async def _run_script(request: Request) -> Response:
+    ws, run_id = _ws(request), request.path_params["run_id"]
+    return await _json(lambda: project.run_script(ws, run_id))
 
 
 async def _list_scripts(request: Request) -> Response:

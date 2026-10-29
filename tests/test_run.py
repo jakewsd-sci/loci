@@ -151,11 +151,15 @@ def test_only_declared_inputs_can_be_read(ws: Workspace, ramp_tif: Path) -> None
     assert "No input named 'other'" in result.stderr
 
 
-def test_scripts_can_be_files(ws: Workspace, ramp_tif: Path, tmp_path: Path) -> None:
+def test_scripts_can_be_files(
+    ws: Workspace, ramp_tif: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "double.py"
     path.write_text(DOUBLE)
+    monkeypatch.chdir(tmp_path)
 
-    result = run(ws, path=str(path), inputs={"dem": load(ws, str(ramp_tif)).data_ref})
+    # Given relative to the current directory, recorded absolute so lineage finds the file.
+    result = run(ws, path="double.py", inputs={"dem": load(ws, str(ramp_tif)).data_ref})
     ref = result.outputs[0].data_ref
     assert ref is not None
     record = provenance.read(ws, ref)
