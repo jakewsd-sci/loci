@@ -1,9 +1,13 @@
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
-import type { CheckStatus, LayerDisplay, LayerInfo } from "../types";
+import type { CheckStatus, DataFile, ExportResult, LayerDisplay, LayerInfo } from "../types";
 
 interface Props {
   project: string;
   layers: LayerInfo[];
+  files: DataFile[]; // the project's readable files
+  moreFiles: boolean;
+  exportStep: number | null; // the time step the map shows for the selected layer
   visible: Record<string, boolean>;
   opacity: Record<string, number>;
   displays: Record<string, LayerDisplay>;
@@ -15,6 +19,89 @@ interface Props {
   onOpacity: (ref: string, value: number) => void;
   onBands: (ref: string, bands: string[]) => void;
   onToggleBasemap: () => void;
+  onAddFile: (path: string) => void;
+  onUpload: (files: File[]) => void;
+  onExport: (ref: string, format: string, step: number | null) => Promise<ExportResult>;
+}
+
+const EXPORTS: Record<LayerInfo["kind"], { format: string; label: string }[]> = {
+  raster: [{ format: "geotiff", label: "GeoTIFF (.tif)" }],
+  vector: [
+    { format: "gpkg", label: "GeoPackage (.gpkg)" },
+    { format: "geojson", label: "GeoJSON (.geojson)" },
+    { format: "csv", label: "CSV (.csv)" },
+  ],
+};
+
+const size = (bytes: number) =>
+  bytes < 1024 ** 2 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+
+/** A file's name and the folder it is in, for one row of the list. */
+function splitPath(path: string): { name: string; folder: string } {
+  const at = path.lastIndexOf("/");
+  return at < 0 ? { name: path, folder: "" } : { name: path.slice(at + 1), folder: path.slice(0, at) };
+}
+
+/** Export the selected layer to exports/, then offer the file and say what the format left out. */
+function ExportSetting({ layer, step, onExport }: { layer: LayerInfo; step: number | null; onExport: Props["onExport"] }) {
+  const choices = EXPORTS[layer.kind];
+  const [format, setFormat] = useState(choices[0].format);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<ExportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const stack = layer.kind === "raster" && layer.times > 1;
+
+  useEffect(() => {
+    setFormat(EXPORTS[layer.kind][0].format);
+    setDone(null);
+    setError(null);
+  }, [layer.data_ref, layer.kind]);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      setDone(await onExport(layer.data_ref, format, stack ? (step ?? 0) : null));
+    } catch (e) {
+      setDone(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="setting export">
+      <label className="setting-head" htmlFor="export-format">
+        <span>Export{stack ? " the date shown" : ""}</span>
+      </label>
+      <div className="export-row">
+        <select id="export-format" value={format} onChange={(e) => setFormat(e.target.value)}>
+          {choices.map((c) => (
+            <option key={c.format} value={c.format}>{c.label}</option>
+          ))}
+        </select>
+        <button type="button" className="secondary" disabled={busy} onClick={() => void run()}>
+          {busy ? "Exporting" : "Export"}
+        </button>
+      </div>
+      {done && (
+        <div className="export-done">
+          <span>
+            Saved as exports/
+            <a href={`/api/exports/${encodeURIComponent(done.download)}`} download>
+              {done.download}
+            </a>{" "}
+            · {size(done.bytes)}
+          </span>
+          {done.notes.map((note) => (
+            <span key={note} className="note">{note}</span>
+          ))}
+        </div>
+      )}
+      {error && <p className="export-done error">{error}</p>}
+    </div>
+  );
 }
 
 const GROUPS: { title: string; test: (l: LayerInfo) => boolean }[] = [
@@ -44,6 +131,7 @@ function bandChoices(layer: LayerInfo): { label: string; bands: string[] }[] {
 
 export function LayersPanel(props: Props) {
   const { layers, selected, displays } = props;
+  const picker = useRef<HTMLInputElement>(null);
   const chosen = layers.find((l) => l.data_ref === selected) ?? null;
   const counts = { pass: 0, warn: 0, fail: 0, none: 0 };
   for (const l of layers) counts[l.validation ?? "none"] += 1;
@@ -96,6 +184,61 @@ export function LayersPanel(props: Props) {
             </section>
           );
         })}
+        <section className="layer-group files" aria-label="Files">
+          <div className="group-head">
+            <h2 className="label">Files</h2>
+            <button type="button" className="ghost add-files" onClick={() => picker.current?.click()}>
+              <Icon name="plus" size={14} /> Add files
+            </button>
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                if (e.target.files?.length) props.onUpload([...e.target.files]);
+                e.target.value = "";
+              }}
+            />
+          </div>
+          {props.files.length === 0 && (
+            <p className="files-empty">
+              Drop files on the map, or add GeoTIFF, GeoPackage, GeoJSON, shapefile or CSV files to the
+              project folder.
+            </p>
+          )}
+          {props.files.map((file) => {
+            const { name, folder } = splitPath(file.path);
+            const shown = file.data_ref;
+            return (
+              <div key={file.path} className={`layer-row file-row${shown && shown === selected ? " selected" : ""}`}>
+                <span aria-hidden="true" className={`swatch ${file.kind === "vector" ? "vector" : "file"}`} />
+                <span className="names">
+                  <span className="name" title={file.path}>{name}</span>
+                  <span className="ref">{folder ? `${folder} · ` : ""}{size(file.size)}</span>
+                </span>
+                {shown ? (
+                  <button type="button" className="ghost on-map" onClick={() => props.onSelect(shown)}>
+                    On map
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="ghost add"
+                    aria-label={`Add ${name} to the map`}
+                    title="Add to the map"
+                    onClick={() => props.onAddFile(file.path)}
+                  >
+                    <Icon name="plus" size={14} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {props.moreFiles && (
+            <p className="files-empty">More files than are listed: open a smaller folder to see them all.</p>
+          )}
+        </section>
         <section className="layer-group" aria-label="Basemap">
           <h2 className="label">Basemap</h2>
           <div className="layer-row">
@@ -117,8 +260,9 @@ export function LayersPanel(props: Props) {
           </div>
         </section>
       </div>
-      {chosen && chosen.drawable && (
+      {chosen && (
         <div className="layer-settings">
+          {chosen.drawable && (
           <div className="setting">
             <label className="setting-head" htmlFor="opacity">
               <span>Opacity · {chosen.name}</span>
@@ -133,7 +277,8 @@ export function LayersPanel(props: Props) {
               onChange={(e) => props.onOpacity(chosen.data_ref, Number(e.target.value) / 100)}
             />
           </div>
-          {chosen.kind === "raster" && chosen.bands.length > 1 && (
+          )}
+          {chosen.drawable && chosen.kind === "raster" && chosen.bands.length > 1 && (
             <div className="setting">
               <label className="setting-head" htmlFor="bands">
                 <span>Bands</span>
@@ -151,6 +296,7 @@ export function LayersPanel(props: Props) {
               </select>
             </div>
           )}
+          <ExportSetting layer={chosen} step={props.exportStep} onExport={props.onExport} />
         </div>
       )}
       <div className="checks-summary">

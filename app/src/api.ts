@@ -1,5 +1,7 @@
 import type {
   AgentEvent,
+  DataFiles,
+  ExportResult,
   LayerDetail,
   LayerDisplay,
   LayerInfo,
@@ -14,10 +16,12 @@ import type {
 
 export class ApiError extends Error {
   readonly hint: string | null;
+  readonly status: number;
 
-  constructor(message: string, hint: string | null) {
+  constructor(message: string, hint: string | null, status = 400) {
     super(message);
     this.hint = hint;
+    this.status = status;
   }
 }
 
@@ -25,7 +29,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(body?.error ?? response.statusText, body?.hint ?? null);
+    throw new ApiError(body?.error ?? response.statusText, body?.hint ?? null, response.status);
   }
   return body as T;
 }
@@ -62,6 +66,15 @@ export const api = {
   forgetKey: (provider: string) =>
     request<ModelList>(`/api/providers/${provider}/key`, { method: "DELETE" }),
   runScript: (runId: string) => request<RunScript>(`/api/runs/${runId}/script`),
+  files: () => request<DataFiles>("/api/files"),
+  loadFile: (path: string) => send<{ data_ref: string }>("/api/files/load", "POST", { path }),
+  upload: (file: File, replace = false) =>
+    request<{ path: string; loadable: boolean; unchanged: boolean }>(
+      `/api/files/data/${enc(file.name)}${replace ? "?replace=1" : ""}`,
+      { method: "PUT", body: file },
+    ),
+  exportLayer: (ref: string, format: string, step: number | null) =>
+    send<ExportResult>(`/api/layers/${ref}/export`, "POST", { format, step }),
   decide: (id: string, accepted: boolean, note = "") =>
     send<{ id: string; accepted: boolean }>("/api/agent/decide", "POST", { id, accepted, note }),
 };

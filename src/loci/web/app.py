@@ -31,10 +31,13 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from loci import demo, provenance
 from loci.errors import LociError, UnknownRefError
+from loci.io.write import RASTER_FORMATS, VECTOR_FORMATS
+from loci.tools.export import export
 from loci.tools.lineage import lineage
+from loci.tools.load import load
 from loci.tools.run import run
 from loci.tools.validate import validate
-from loci.web import layers, project
+from loci.web import files, layers, project
 from loci.web.agent import Agent
 from loci.web.providers import BY_ID, DEFAULT_MODEL, forget_key, providers, save_key
 from loci.web.turn import DEFAULT_REVIEW
@@ -71,6 +74,11 @@ def create_app(
         Route("/api/agent", _agent, methods=["POST"]),
         Route("/api/agent/decide", _decide, methods=["POST"]),
         Route("/api/runs/{run_id}/script", _run_script),
+        Route("/api/files", _list_files),
+        Route("/api/files/load", _load_file, methods=["POST"]),
+        Route("/api/files/data/{name}", _upload, methods=["PUT"]),
+        Route("/api/exports/{name}", _exported),
+        Route("/api/layers/{ref}/export", _export_layer, methods=["POST"]),
         Route("/api/scripts", _list_scripts),
         Route("/api/scripts/{path:path}", _script, methods=["GET", "PUT"]),
         Route("/api/run", _run, methods=["POST"]),
@@ -329,6 +337,60 @@ async def _decide(request: Request) -> Response:
     if not agent.decide(str(body.get("id", "")), accepted, str(body.get("note") or "")):
         return JSONResponse({"error": "Nothing is waiting for that answer."}, status_code=404)
     return JSONResponse({"id": body["id"], "accepted": accepted})
+
+
+async def _list_files(request: Request) -> Response:
+    return await _json(lambda: files.data_files(request.app.state.project, _ws(request)))
+
+
+async def _load_file(request: Request) -> Response:
+    """Put a project file on the map, as the load tool does, and check it at once."""
+    ws, body = _ws(request), await _body(request)
+    file = files.project_file(request.app.state.project, str(body.get("path", "")))
+
+    def loaded() -> BaseModel:
+        result = load(ws, str(file))
+        validate(ws, [result.data_ref])  # as the hook does for the agent's loads
+        return result
+
+    return await _json(loaded)
+
+
+async def _upload(request: Request) -> Response:
+    """Save a file dropped on the map in data/; ?replace=1 replaces one already there."""
+    name = request.path_params["name"]
+    replace = request.query_params.get("replace") == "1"
+    try:
+        saved = await files.save_upload(
+            request.app.state.project, name, request.stream(), replace=replace
+        )
+    except FileExistsError as e:
+        return JSONResponse({"error": str(e), "hint": "Replace it, or rename the file."}, 409)
+    path = saved.path.relative_to(request.app.state.project).as_posix()
+    loadable = saved.path.suffix.lower() in files.LISTED
+    return JSONResponse({"path": path, "loadable": loadable, "unchanged": saved.unchanged})
+
+
+async def _export_layer(request: Request) -> Response:
+    """Write a layer to exports/ as it is held; the reply says where, and what changed."""
+    ws, ref, body = _ws(request), request.path_params["ref"], await _body(request)
+    fmt = str(body.get("format") or "")
+    step = body.get("step")
+    suffix = {**RASTER_FORMATS, **VECTOR_FORMATS}.get(fmt)
+    if suffix is None or (step is not None and not isinstance(step, int)):
+        raise LociError("Choose a format, and a time step as a whole number.")
+    name = layers.layer_info(ws, ws.record(ref)).name
+    target = files.export_path(request.app.state.project, name, suffix)
+    result = await run_in_threadpool(export, ws, ref, str(target), format=fmt, step=step)
+    return JSONResponse({**result.model_dump(mode="json"), "download": target.name})
+
+
+async def _exported(request: Request) -> Response:
+    name = request.path_params["name"]
+    path = request.app.state.project / files.EXPORTS_DIR / name
+    if Path(name).name != name or name.startswith(".") or not path.is_file():
+        return JSONResponse({"error": f"No export named {name!r}."}, status_code=404)
+    return FileResponse(path, filename=name)
 
 
 async def _run_script(request: Request) -> Response:

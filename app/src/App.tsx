@@ -10,6 +10,7 @@ import { FocusChip, Inspector, Legend, Readout } from "./components/Overlays";
 import { Icon, Logo } from "./icons";
 import type {
   Bounds,
+  DataFile,
   LayerDisplay,
   LayerInfo,
   MapFocus,
@@ -94,6 +95,9 @@ export function App() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [model, setModel] = useState<string>(() => storedModel() ?? "");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [files, setFiles] = useState<DataFile[]>([]);
+  const [moreFiles, setMoreFiles] = useState(false);
+  const [dropping, setDropping] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [point, setPoint] = useState<[number, number] | null>(null);
   const [values, setValues] = useState<PointValues | null>(null);
@@ -203,8 +207,72 @@ export function App() {
     }
   }, []);
 
+  const refreshFiles = useCallback(() => {
+    api.files().then(
+      (found) => {
+        setFiles(found.files);
+        setMoreFiles(found.more);
+      },
+      () => undefined,
+    );
+  }, []);
+
+  const addFile = useCallback(
+    async (path: string) => {
+      try {
+        await api.loadFile(path);
+      } catch (e) {
+        setToast(`${path}: ${withHint(e).message}`);
+      }
+      refreshFiles();
+    },
+    [refreshFiles],
+  );
+
+  /** Save dropped or picked files in data/, asking before replacing one, then map the data. */
+  const upload = useCallback(
+    async (picked: File[]) => {
+      const loadable: string[] = [];
+      for (const file of picked) {
+        try {
+          let saved;
+          try {
+            saved = await api.upload(file);
+          } catch (e) {
+            if (!(e instanceof ApiError && e.status === 409)) throw e;
+            if (!window.confirm(`data/${file.name} is already in the project. Replace it?`)) continue;
+            saved = await api.upload(file, true);
+          }
+          // A file dropped again unchanged is left alone, and so is its layer.
+          if (saved.loadable && !(saved.unchanged && files.some((f) => f.path === saved.path && f.data_ref)))
+            loadable.push(saved.path);
+        } catch (e) {
+          setToast(`${file.name}: ${withHint(e).message}`);
+        }
+      }
+      // Companion files (a shapefile's .dbf, .prj, …) are all saved before the data are read.
+      for (const path of loadable) await addFile(path);
+      refreshFiles();
+    },
+    [addFile, refreshFiles, files],
+  );
+
+  const exportLayer = useCallback(async (ref: string, format: string, step: number | null) => {
+    try {
+      return await api.exportLayer(ref, format, step);
+    } catch (e) {
+      throw withHint(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("focus", refreshFiles); // files added to the folder meanwhile
+    return () => window.removeEventListener("focus", refreshFiles);
+  }, [refreshFiles]);
+
   useEffect(() => {
     refreshModels();
+    refreshFiles();
     fetch("/api/project")
       .then((r) => r.json())
       .then(
@@ -220,6 +288,7 @@ export function App() {
     return watchWorkspace(
       () => {
         void refreshLayers();
+        refreshFiles();
         setVersion((n) => n + 1);
       },
       () => {
@@ -227,7 +296,7 @@ export function App() {
         setScriptsVersion((n) => n + 1);
       },
     );
-  }, [refreshLayers, refreshModels]);
+  }, [refreshLayers, refreshModels, refreshFiles]);
 
   const chooseReview = useCallback((next: Review) => {
     setReviewMode(next);
@@ -390,6 +459,12 @@ export function App() {
       <LayersPanel
         project={project}
         layers={layers}
+        files={files}
+        moreFiles={moreFiles}
+        exportStep={chosen ? shown[chosen.data_ref]?.step ?? null : null}
+        onAddFile={(path) => void addFile(path)}
+        onUpload={(picked) => void upload(picked)}
+        onExport={exportLayer}
         visible={visible}
         opacity={opacity}
         displays={displays}
@@ -403,7 +478,28 @@ export function App() {
         onToggleBasemap={() => setBasemap((b) => !b)}
       />
 
-      <main className="map-area">
+      <main
+        className="map-area"
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault(); // allows the drop
+          setDropping(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+        }}
+        onDrop={(e) => {
+          if (!e.dataTransfer.files.length) return;
+          e.preventDefault();
+          setDropping(false);
+          void upload([...e.dataTransfer.files]);
+        }}
+      >
+        {dropping && (
+          <div className="overlay drop-target" aria-hidden="true">
+            <div className="glass">Drop to add to data/ and the map</div>
+          </div>
+        )}
         <MapView
           ref={mapRef}
           drawn={drawn}

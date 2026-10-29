@@ -1,7 +1,7 @@
 // The loci web API's JSON shapes (see src/loci/web in the Python package).
 
 export type CheckStatus = "pass" | "warn" | "fail";
-export type ProducedBy = "load" | "stac_search" | "run";
+export type ProducedBy = "load" | "stac_search" | "run" | "export";
 export type Bounds = [number, number, number, number];
 
 export interface LayerInfo {
@@ -207,3 +207,28 @@ export type AgentEvent =
       tokens?: { input: number; output: number }; // loci's own loop reports these
     }
   | { type: "error"; message: string; hint?: string | null };
+
+/** A file in the project that loci can read, and its layer if it is on the map. */
+export interface DataFile {
+  path: string; // relative to the project, with /
+  kind: "raster" | "vector";
+  format: string;
+  size: number;
+  modified: string;
+  data_ref: string | null;
+}
+
+export interface DataFiles {
+  files: DataFile[];
+  more: boolean; // more files than were listed
+}
+
+/** A layer written to exports/ as it is held, with what the format could not keep. */
+export interface ExportResult {
+  data_ref: string;
+  path: string;
+  format: string;
+  bytes: number;
+  notes: string[];
+  download: string; // its name under /api/exports/
+}

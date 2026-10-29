@@ -391,3 +391,24 @@ code, pre, .mono { font-family: var(--mono); }
 .timeline .what { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .sources { margin: 0; padding: 0; list-style: none; font: 11px var(--mono); color: var(--muted); display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
 .placeholder { color: var(--muted); padding: 18px 16px; }
+
+/* Files: the project's data, dropped files, exports */
+.layer-group .group-head { display: flex; align-items: center; gap: 8px; }
+.layer-group .group-head .label { flex: 1; }
+.add-files { height: 24px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); border-radius: 6px; }
+.files-empty { margin: 2px 4px 6px; font-size: 11px; line-height: 1.45; color: var(--faint); }
+.file-row { gap: 10px; padding: 4px 6px 4px 10px; }
+.file-row .names { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.file-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-row .add { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; color: var(--muted); border-radius: 7px; }
+.file-row .on-map { height: 24px; padding: 0 8px; font-size: 11px; color: var(--accent); border-radius: 6px; }
+.swatch.file { background: linear-gradient(135deg, #2c4f7c, #5b8fbf); }
+.setting.export .export-row { display: flex; gap: 6px; }
+.setting.export select { flex: 1; min-width: 0; height: 30px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel); padding: 0 8px; font-size: 12px; }
+.setting.export .secondary { height: 30px; font-size: 12px; }
+.export-done { margin: 0; display: flex; flex-direction: column; gap: 3px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+.export-done a { color: var(--accent); }
+.export-done .note { color: var(--warn); }
+.export-done.error { color: var(--fail); }
+.drop-target { inset: 0; display: grid; place-items: center; background: rgba(138, 180, 255, 0.08); box-shadow: inset 0 0 0 2px var(--accent); pointer-events: none; z-index: 30; }
+.drop-target .glass { padding: 14px 18px; border-radius: 12px; font-weight: 500; }
