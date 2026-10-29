@@ -123,7 +123,9 @@ def main(argv: list[str] | None = None) -> int:
             scores.append(attempt(task, folder, number=number, use_agent=args.agent))
             verdict = "correct" if scores[-1].correct else "wrong"
             print(f"{task.id} #{number}: {verdict}", flush=True)
-    (out / "results.json").write_text(json.dumps([asdict(s) for s in scores], indent=2))
+    (out / "results.json").write_text(
+        json.dumps([asdict(s) for s in scores], indent=2), encoding="utf-8"
+    )
     print(f"\n{table(scores)}\n\nResults: {out / 'results.json'}")
     return 0 if args.agent or all(s.correct for s in scores) else 1
 

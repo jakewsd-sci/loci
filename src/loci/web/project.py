@@ -54,7 +54,7 @@ def scripts(project: Path) -> list[ScriptFile]:
         return []
     return [
         ScriptFile(
-            path=str(p.relative_to(project)),
+            path=p.relative_to(project).as_posix(),
             size=p.stat().st_size,
             modified=datetime.fromtimestamp(p.stat().st_mtime, UTC).isoformat(timespec="seconds"),
         )
@@ -66,13 +66,13 @@ def read_script(project: Path, path: str) -> ScriptContent:
     file = script_path(project, path)
     if not file.exists():
         raise LociError(f"No script {path!r}.", hint=f"Scripts live in {SCRIPTS_DIR}/.")
-    return ScriptContent(path=path, content=file.read_text())
+    return ScriptContent(path=path, content=file.read_text(encoding="utf-8"))
 
 
 def write_script(project: Path, path: str, content: str) -> ScriptContent:
     file = script_path(project, path)
     file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text(content)
+    file.write_text(content, encoding="utf-8")
     return ScriptContent(path=path, content=content)
 
 
@@ -101,7 +101,7 @@ def script_link(project: Path, record: Provenance) -> ScriptLink | None:
     current = provenance.sha256_file(file) if file.exists() else None
     return ScriptLink(
         run_id=record.run_id,
-        path=str(file.relative_to(project.resolve())),
+        path=file.relative_to(project.resolve()).as_posix(),
         changed=current != record.code_sha256,
     )
 
@@ -111,7 +111,7 @@ def run_script(ws: Workspace, run_id: str) -> RunScript:
     file = ws.runs_dir / run_id / "script.py"
     if not RUN_ID.fullmatch(run_id) or not file.exists():
         raise LociError(f"No run {run_id!r} in this workspace.")
-    content = file.read_text()
+    content = file.read_text(encoding="utf-8")
     return RunScript(run_id=run_id, content=content, sha256=provenance.sha256_text(content))
 
 
@@ -120,5 +120,5 @@ def scripts_fingerprint(project: Path) -> str:
     folder = project / SCRIPTS_DIR
     digest = hashlib.sha256()
     for file in sorted(folder.rglob("*.py")) if folder.is_dir() else []:
-        digest.update(f"{file.relative_to(project)}:{file.stat().st_mtime_ns};".encode())
+        digest.update(f"{file.relative_to(project).as_posix()}:{file.stat().st_mtime_ns};".encode())
     return digest.hexdigest()[:16]

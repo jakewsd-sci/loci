@@ -9,12 +9,17 @@ permissions:
 
 jobs:
   checks:
-    name: checks (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: checks (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        include:
+          - { label: "Python 3.12", os: ubuntu-latest, python-version: "3.12" }
+          - { label: "Python 3.13", os: ubuntu-latest, python-version: "3.13" }
+          # The people loci is for work on Windows and macOS too (D-049).
+          - { label: "Windows, Python 3.12", os: windows-latest, python-version: "3.12" }
+          - { label: "macOS, Python 3.12", os: macos-latest, python-version: "3.12" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -61,6 +66,9 @@ jobs:
       - name: Install the app's dependencies
         run: npm ci
 
-      # Type-checks with tsc, then bundles with Vite.
+      # Type-checks with tsc, then bundles with Vite into the Python package.
       - name: Build
         run: npm run build
+
+      - name: Check the bundle is where the package serves it from
+        run: test -f ../src/loci/web/static/index.html

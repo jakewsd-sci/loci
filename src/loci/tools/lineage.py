@@ -73,7 +73,7 @@ def _file_record(target: str) -> tuple[Provenance, str, Path]:
             f"{target!r} is neither a data_ref nor a file with a provenance sidecar.",
             hint="Pass a data_ref, or the path of a file written by run.",
         )
-    return Provenance.model_validate_json(sidecar.read_text()), str(path), sidecar
+    return Provenance.model_validate_json(sidecar.read_text(encoding="utf-8")), str(path), sidecar
 
 
 def _ref_step(ws: Workspace, ref: str, warnings: list[str], notes: list[str]) -> LineageStep:
