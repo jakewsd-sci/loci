@@ -49,6 +49,7 @@ personal choice in `.claude/settings.local.json`. The workspace is `.loci/` in t
 ```
 src/loci/        the package
   io/            readers: files, URLs and STAC items -> xarray Dataset or GeoDataFrame  [M1, M3]
+                 gridded.py for NetCDF and Zarr (CF axes, select=, bbox=)                [P2]
                  and writers (write.py) for run outputs and exports                      [P2]
   summary/       compact summaries of loaded data                                        [M1]
   checks/        geospatial invariants and the runner behind `validate`                  [M2]
@@ -112,6 +113,8 @@ docs/DECISIONS.md  decision log
   step and events.
 - loci runs on Windows too: read and write text as UTF-8 (a test checks), send paths to the app
   with `/`, and do not assume POSIX processes or permissions.
+- Gridded data (NetCDF, Zarr) are read only where needed: variables, levels, periods and areas
+  are chosen before anything is read, and anything CF does not state is flagged (D-051).
 - STAC loads never resample or reproject on their own: mixed resolutions or CRSs are errors until
   `resolution=` or `output_crs=` is given, and whatever was done is recorded as a note.
 - Every new data_ref or file a tool makes gets a provenance record (`loci.provenance`) naming its

@@ -1087,3 +1087,53 @@ results stayed in run folders inside the workspace.
   `loci open` takes any folder.
 - Export as COG or NetCDF now: GeoTIFF serves every GIS; NetCDF comes with gridded data (P2.4c).
 
+## D-051 Gridded data: NetCDF and Zarr, read where they are needed (Phase 2, 2026-10-29)
+
+**Context.** The user wants to demo loci on gridded climate data: reanalyses such as ERA5 and
+climate model output, as NetCDF downloads and as Zarr stores in the cloud. These grids differ from
+GeoTIFFs. They name their axes by CF conventions, not x and y, and often state no CRS. They have
+more dimensions (pressure level, ensemble member) and hold values in kelvin. Their longitudes may
+run 0 to 360. Some, like the public ERA5 archive, are enormous: 273 variables, hourly from 1900,
+each hour one global chunk. The user approved netCDF4 and zarr as dependencies; reading Zarr over
+HTTPS also needs aiohttp, which fsspec (already installed) uses as its HTTP client.
+
+**Choice.**
+- **One raster form.** `.nc` files and `.zarr` stores (local, or https://) load as rasters with
+  one variable per band and dims (time, y, x), values as stored, as GeoTIFFs and STAC loads do.
+  - CF attributes, units or names say which dimensions are longitude, latitude and time. The
+    renaming is noted.
+  - Bands now carry their `units` and `long_name`.
+- **Flagged, not guessed.**
+  - The CRS comes from the variables' grid_mapping. Without one, a longitude/latitude grid is
+    taken to be WGS 84 with a warning, as for a table of longitudes and latitudes.
+  - Variables must share their dimensions.
+  - A dimension with several values must be chosen with the new `select=` option of `load`. One
+    with a single value is taken, with a note.
+  - Calendars other than the standard one are refused with a hint.
+  - Longitudes 0 to 360 are kept, with a note; the map shows them from -180.
+- **Read only what is needed.**
+  - Stores open without dask. The variables, period, level and area chosen (`bands=`, `select=`,
+    `bbox=`) are cut out before the remainder is chunked as it is stored, so opening ERA5 takes
+    seconds and a few hundred MB.
+  - A time axis longer than 10,000 steps must be narrowed.
+  - Statistics sample at most 24 evenly spaced time steps, and say so.
+  - A point's values through time are refused, with an estimate of the read, when the store's
+    chunks would make it large: over 256 MB from the cloud, 4 GB from disk.
+  - A time stack's colour scale is taken from dates across it, so a seasonal cycle does not
+    saturate the map.
+- **Out.** A raster exports to NetCDF with every time step and its CRS as a grid_mapping. An
+  export says when it now states a CRS that was assumed at load.
+- The demo gains a monthly temperature grid with a warming trend of exactly 0.3 °C per decade,
+  hidden by an ±8 K seasonal cycle in kelvin. A network test reads a day of the real ERA5
+  archive over Sydney.
+
+`load`'s new `select=` and the band summary's units are changes to the stable interface.
+
+**Alternatives.**
+- Read every variable and dimension and let scripts choose: a store like ERA5 cannot be opened
+  that way, and silent choices of a level or time would be guesses.
+- h5netcdf instead of netCDF4: no NetCDF 3 files, which older data still use.
+- Reproject 0–360 grids to -180–180 at load: it changes the data; only the map needs it.
+- obstore for cloud stores: smaller, but fsspec is already a dependency and is the ecosystem's
+  common path.
+
