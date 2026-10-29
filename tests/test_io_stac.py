@@ -208,6 +208,75 @@ def test_drop_offset_without_offsets_changes_nothing(tmp_path: Path) -> None:
     assert result.notes == ["drop_offset=True changed nothing: no loaded band declares an offset."]
 
 
+def _marked(tmp_path: Path, marks: list[bool]) -> str:
+    """The synthetic scenes saved as items, each marked boa_offset_applied as given."""
+    items = syn.stac_items(tmp_path / "scenes")
+    for item, mark in zip(items, marks, strict=True):
+        if mark:
+            item.properties["earthsearch:boa_offset_applied"] = True
+    path = tmp_path / "items.json"
+    save_items(items, path, {})
+    return str(path)
+
+
+def test_auto_offset_is_left_out_when_every_item_says_it_is_applied(tmp_path: Path) -> None:
+    result = read(
+        _marked(tmp_path, [True, True, True]),
+        STAC_RASTER,
+        ReadOptions(bands=["red"], drop_offset="auto"),
+    )
+
+    assert "add_offset" not in result.data["red"].attrs
+    assert result.options.drop_offset is True  # the record keeps the decision, not "auto"
+    assert result.warnings == []
+    assert result.notes == [
+        "Declared offset -0.1 left out of ['red']: every item is marked "
+        "earthsearch:boa_offset_applied = true, so its stored values already include it. "
+        "Physical value = stored * scale; pass drop_offset=False to apply it anyway."
+    ]
+
+
+def test_auto_offset_is_applied_when_no_item_says_it_is(tmp_path: Path) -> None:
+    result = read(
+        _marked(tmp_path, [False, False, False]),
+        STAC_RASTER,
+        ReadOptions(bands=["red"], drop_offset="auto"),
+    )
+
+    assert result.data["red"].attrs["add_offset"] == syn.STAC_OFFSET
+    assert result.options.drop_offset is False
+    assert (result.warnings, result.notes) == ([], [])
+
+
+def test_auto_offset_refuses_items_that_disagree(tmp_path: Path) -> None:
+    with pytest.raises(LoadError, match="2 of 3 items are marked") as raised:
+        read(
+            _marked(tmp_path, [True, False, True]),
+            STAC_RASTER,
+            ReadOptions(bands=["red"], drop_offset="auto"),
+        )
+
+    assert raised.value.hint is not None and "drop_offset=True" in raised.value.hint
+
+
+def test_auto_offset_ignores_bands_without_offsets(tmp_path: Path) -> None:
+    result = read(
+        _marked(tmp_path, [True, False, True]),
+        STAC_RASTER,
+        ReadOptions(bands=["scl"], drop_offset="auto"),
+    )
+
+    assert result.options.drop_offset is False and result.notes == []
+
+
+def test_records_made_before_auto_still_apply_the_offset(tmp_path: Path) -> None:
+    # Older records store drop_offset as None; reopening them must not change their values.
+    result = read(_marked(tmp_path, [True, True, True]), STAC_RASTER, ReadOptions(bands=["red"]))
+
+    assert result.data["red"].attrs["add_offset"] == syn.STAC_OFFSET
+    assert result.options.drop_offset is None
+
+
 def test_drop_offset_is_only_for_stac(ramp_tif: Path) -> None:
     with pytest.raises(LoadError, match="drop_offset="):
         read(str(ramp_tif), Format("raster", "geotiff"), ReadOptions(drop_offset=True))

@@ -12,6 +12,7 @@ from loci.errors import LoadError, LociError
 from loci.models import RasterSummary, VectorSummary
 from loci.summary.raster import decimation_for
 from loci.tools.inspect import inspect
+from loci.tools.lineage import lineage
 from loci.tools.load import RASTER_LOAD_NOTE, load
 from loci.tools.stac_search import stac_search
 from loci.tools.validate import validate
@@ -200,15 +201,28 @@ def test_drop_offset_is_recorded_and_checked(
     monkeypatch.setattr("loci.tools.stac_search.search_items", FakeCatalogue(items))
     ref = stac_search(ws, bbox=AREA, start="2024-03-01", end="2024-03-31").data_ref
 
-    kept = load(ws, ref, bands=["red"])
+    automatic = load(ws, ref, bands=["red"])  # every item is marked: left out on its own
+    kept = load(ws, ref, bands=["red"], drop_offset=False)
     dropped = load(ws, ref, bands=["red"], drop_offset=True)
-    report = validate(ws, [dropped.data_ref], variables={"red": "reflectance"})
+    report = validate(ws, [automatic.data_ref], variables={"red": "reflectance"})
     value_range = next(c for c in report.checks if c.check == "value_range")
 
     assert any("counted twice" in w for w in kept.warnings)
-    assert isinstance(dropped.summary, RasterSummary)
-    assert dropped.summary.bands[0].offset is None
-    assert Workspace(ws.root).record(dropped.data_ref).source.options.drop_offset is True
-    assert any("not applied" in n for n in inspect(Workspace(ws.root), dropped.data_ref).notes)
+    assert not any("counted twice" in w for w in automatic.warnings + dropped.warnings)
+    assert isinstance(automatic.summary, RasterSummary)
+    assert automatic.summary.bands[0].offset is None
+    reopened = Workspace(ws.root)
+    assert reopened.record(automatic.data_ref).source.options.drop_offset is True
+    assert reopened.record(kept.data_ref).source.options.drop_offset is False
+    assert any("left out" in n for n in inspect(reopened, automatic.data_ref).notes)
+    assert any("not applied" in n for n in inspect(reopened, dropped.data_ref).notes)
     assert value_range.details["applied"] == "stored * 0.0001"
     assert value_range.details["max"] == pytest.approx(max(syn.STAC_RED) * syn.STAC_SCALE)
+    assert (
+        lineage(ws, automatic.data_ref)
+        .steps[0]
+        .description.endswith(
+            "leaving out the declared offset that every item marks as already applied."
+        )
+    )
+    assert "drop_offset=False" in lineage(ws, kept.data_ref).steps[0].description

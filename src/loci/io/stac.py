@@ -170,9 +170,9 @@ def load_stac(uri: str, fmt: str, options: ReadOptions) -> ReadResult:
 
     Nothing is resampled or reprojected unless the options ask for it: mixed native resolutions
     or mixed CRSs are errors until resolution= or output_crs= is chosen, and any resampling or
-    reprojection is noted. Scale and offset are attached to bands when every item agrees;
-    drop_offset leaves declared offsets out, with a note, and a warning for items that do not say
-    their offset was already applied.
+    reprojection is noted. Scale and offset are attached to bands when every item agrees.
+    drop_offset=True leaves declared offsets out, with a note, and a warning for items that do not
+    say their offset was already applied; "auto" decides from the items (see _offset_choice).
     """
     items, search = read_items(uri)
     if not items:
@@ -205,8 +205,9 @@ def load_stac(uri: str, fmt: str, options: ReadOptions) -> ReadResult:
     except (ValueError, rasterio.errors.RasterioError, OSError) as e:
         raise LoadError(f"Cannot load the STAC items: {e}") from e
 
-    drop_offset = bool(options.drop_offset)
-    offset_warnings, notes = _offset_checks(items, bands, drop_offset)
+    automatic = options.drop_offset == "auto"
+    drop_offset = _offset_choice(items, bands) if automatic else bool(options.drop_offset)
+    offset_warnings, notes = _offset_checks(items, bands, drop_offset, automatic=automatic)
     warnings = _apply_scaling(ds, items, bands, drop_offset=drop_offset) + offset_warnings
     resampled = {b: r for b, r in native.items() if r != resolution}
     if resampled and not reprojected:
@@ -226,6 +227,8 @@ def load_stac(uri: str, fmt: str, options: ReadOptions) -> ReadResult:
             "output_crs": crs_to_text(crs),
             "bbox": tuple(bbox),
             "resampling": resampling,
+            # The decision, not "auto": a record reopens the same way whatever the items say.
+            "drop_offset": drop_offset if automatic else options.drop_offset,
         }
     )
     crs_source: CrsSource = "argument" if reprojected else "file"
@@ -321,17 +324,49 @@ def _apply_scaling(
     return warnings
 
 
+def _offset_choice(items: Sequence[pystac.Item], bands: list[str]) -> bool:
+    """Whether to leave declared offsets out, decided from the items (drop_offset="auto").
+
+    Earth Search marks items whose stored values already include the offset with
+    earthsearch:boa_offset_applied = true, yet still declares the offset (D-026). Left out when
+    every item is marked, applied when none is. When only some are, no one choice suits them all:
+    that is an error until drop_offset= is given, like mixed resolutions without resolution=.
+    """
+    if not any(_scale_offset(i, b)[1] != 0 for i in items for b in bands):
+        return False
+    marked = sum(i.properties.get(BOA_APPLIED) is True for i in items)
+    if marked in (0, len(items)):
+        return marked == len(items)
+    raise LoadError(
+        f"{marked} of {len(items)} items are marked {BOA_APPLIED} = true (their stored values "
+        f"already include the declared offset) and {len(items) - marked} "
+        f"{'is' if len(items) - marked == 1 else 'are'} not, so no one offset suits them all.",
+        hint="Load them separately, for example over narrower dates, or choose for all of them: "
+        "drop_offset=True leaves the offset out (the unmarked items come out too high by it), "
+        "drop_offset=False applies it (the marked items count it twice).",
+    )
+
+
 def _offset_checks(
-    items: Sequence[pystac.Item], bands: list[str], drop_offset: bool
+    items: Sequence[pystac.Item], bands: list[str], drop_offset: bool, *, automatic: bool = False
 ) -> tuple[list[str], list[str]]:
     """Warnings and notes about declared offsets.
 
-    Earth Search marks items whose stored values already have the offset applied with
-    earthsearch:boa_offset_applied = true. Applying a declared offset to those counts it twice;
-    dropping it from items without the mark removes a real offset. Both are reported.
+    Applying a declared offset to items marked earthsearch:boa_offset_applied = true counts it
+    twice; dropping it from items without the mark removes a real offset. Both are reported, and
+    an automatic choice says why it was made.
     """
     applied = [i for i in items if i.properties.get(BOA_APPLIED) is True]
     with_offset = sorted({b for i in items for b in bands if _scale_offset(i, b)[1] != 0})
+    if automatic:
+        if not drop_offset:
+            return [], []
+        offsets = sorted({_scale_offset(i, b)[1] for i in items for b in with_offset} - {0.0})
+        return [], [
+            f"Declared offset {', '.join(f'{o:g}' for o in offsets)} left out of {with_offset}: "
+            f"every item is marked {BOA_APPLIED} = true, so its stored values already include "
+            "it. Physical value = stored * scale; pass drop_offset=False to apply it anyway."
+        ]
     if not drop_offset:
         conflicting = sorted({b for i in applied for b in bands if _scale_offset(i, b)[1] != 0})
         if not conflicting:

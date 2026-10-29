@@ -130,7 +130,7 @@ def _describe(record: Provenance) -> str:
     if parent is not None:
         return (
             f"load of bands {parameters.get('bands')} from {len(parent.stac_items)} STAC items "
-            f"found by {parent.data_ref}{_chosen(record)}."
+            f"found by {parent.data_ref}{_chosen(record)}{_offset_left_out(record)}."
         )
     source = next((i.uri for i in record.inputs if i.uri), None)
     return f"load of {source}{_chosen(record)}."
@@ -143,6 +143,15 @@ def _chosen(record: Provenance) -> str:
         return ""
     chosen = [f"{k}={v!r}" for k, v in arguments.items() if k not in {"uri", "kind", "bands"}]
     return f", with {', '.join(chosen)}" if chosen else ""
+
+
+def _offset_left_out(record: Provenance) -> str:
+    """Says so when loci left a declared offset out on its own (drop_offset not given)."""
+    arguments = record.call.get("arguments")
+    chosen = isinstance(arguments, dict) and "drop_offset" in arguments
+    if chosen or record.parameters.get("drop_offset") is not True:
+        return ""
+    return ", leaving out the declared offset that every item marks as already applied"
 
 
 def _stac_items(ws: Workspace, steps: list[LineageStep], own: Provenance | None) -> list[str]:

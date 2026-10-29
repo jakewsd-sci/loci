@@ -890,3 +890,34 @@ make the map work for "how did this place change?".
 - Per-date stretches: brighter pictures, but they hide change.
 - Mask cloudy dates out of the chart: tidier, but it is a silent drop.
 - A drawing library (mapbox-gl-draw): polygons and editing, but a dependency for one box.
+
+## D-046 Offsets already applied are left out by default (Phase 2, 2026-10-29)
+
+**Context.** D-030 left it to the caller to pass `drop_offset=True` for Earth Search scenes whose
+stored values already include the offset they still declare. In use, agents loaded without it.
+- Both agent sessions over Sydney got reflectance about 0.1 too low.
+- The map showed impossible negative red values.
+- Each time, the agent's only response was a warning.
+
+A wrong default that is merely flagged is still a wrong number in front of a scientist.
+
+**Choice.** `load`'s `drop_offset` now defaults to an automatic choice, made from the items'
+metadata, for bands that declare an offset:
+- Left out when every item is marked `earthsearch:boa_offset_applied = true`. A note says so and
+  names `drop_offset=False` as the way back. Lineage says the offset was left out.
+- Applied when no item is marked, as before.
+- An error when only some are. No one value suits them all, so the caller must choose. This
+  follows the rule for mixed resolutions without `resolution=`.
+
+`True` and `False` still decide outright. `ReadOptions.drop_offset` accepts `"auto"` in a
+request, but a record always stores the decision, so a data_ref reopens identically whatever the
+items say later. Records made before this change hold `None`, which still means "apply", so
+their values do not change. The Sydney network test now checks both sides of the quirk: the
+default gives no negative reflectance, and `drop_offset=False` does.
+
+**Alternatives.**
+- Keep the explicit option only (D-030): it stays wrong by default for nearly every recent
+  Earth Search scene.
+- Leave the offset out per item, by its own mark: it could mix two meanings of a value in one
+  band.
+- Decide again each time a data_ref is opened: a data_ref's values could change after the fact.
