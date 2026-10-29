@@ -59,7 +59,10 @@ src/loci/        the package
   hooks.py       Claude Code hook that validates new data_refs (`loci-hook`)             [M5]
   web/           local HTTP API for the map interface (`loci-app`)                       [P2]
     layers.py    layer list, map tiles (rio-tiler; time stacks from memory), point values
-    agent.py     Claude Agent SDK bridge: loci tools, scripts in analysis/, reviews, events
+    agent.py     the agent: Claude in Claude Code (Agent SDK), reviews, checks, events
+    loop.py      loci's own agent loop on Pydantic AI, for OpenAI, Gemini and OpenRouter models
+    providers.py providers, models and keys (environment or ~/.config/loci/config.toml)
+    turn.py      what both engines share: instructions, tool names, script edits
     project.py   the project's scripts under analysis/, links from results to them
     app.py       Starlette routes, server-sent events, serves app/dist
 app/             React + TypeScript web app (Vite): MapLibre map, Monaco editor          [P2]
@@ -94,6 +97,8 @@ docs/DECISIONS.md  decision log
 - New checks are small functions in `checks/` that take `Layer`s and return a `CheckResult` with a
   stable id. Test each one on a fixture built to pass and one built to fail. `checks/runner.py`
   decides where it applies.
+- Model providers' keys come from the environment or the user's config file, never from the
+  project or the browser. Both agent engines go through the same permission step and events.
 - STAC loads never resample or reproject on their own: mixed resolutions or CRSs are errors until
   `resolution=` or `output_crs=` is given, and whatever was done is recorded as a note.
 - Every new data_ref or file a tool makes gets a provenance record (`loci.provenance`) naming its
@@ -127,4 +132,6 @@ Phase 2, the map interface:
 - [x] P2.2: the agent writes its analyses as scripts under analysis/, changes (and optionally
       runs) wait for review as diffs, results link to their scripts, follow-up questions;
       offsets already applied are left out by default; agents load `scl` (D-046, D-047)
-- [ ] Next: chosen with the user
+- [x] P2.3: models from OpenAI, Gemini and OpenRouter in loci's own loop on Pydantic AI, with the
+      same tools and reviews; Claude also through Bedrock, Vertex or Foundry; a picker (D-048)
+- [ ] P2.4 (agreed next): one-command install, bringing data in and out, a sandbox for `run`
