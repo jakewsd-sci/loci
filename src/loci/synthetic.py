@@ -16,7 +16,7 @@ import pystac
 import rasterio
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
-from pyproj import Geod, Transformer
+from pyproj import CRS, Geod, Transformer
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 from shapely.geometry import Polygon, box, mapping
@@ -548,3 +548,106 @@ def stac_items(
             )
         items.append(item)
     return items
+
+
+# Gridded climate data (NetCDF, Zarr): monthly 2 m temperature over 2001-2020 on a 0.25 degree
+# longitude/latitude grid around Sicily, as from the Copernicus Climate Data Store: no
+# grid_mapping, latitude descending, time named valid_time, values in kelvin.
+CLIMATE_START, CLIMATE_YEARS = 2001, 20
+CLIMATE_TREND = 0.3  # kelvin per decade, which is also degrees Celsius per decade
+CLIMATE_BASE = 288.15  # kelvin (15 degrees C) at 37 N in 2001
+CLIMATE_SEASON = 8.0  # kelvin: the amplitude of the seasonal cycle, peaking in July
+CLIMATE_LAPSE = 0.5  # kelvin cooler per degree of latitude north of 37 N
+CLIMATE_LATS = np.round(np.arange(38.0, 35.99, -0.25), 2)  # 9 rows, north to south
+CLIMATE_LONS = np.round(np.arange(14.0, 16.01, 0.25), 2)  # 9 columns
+CLIMATE_LEVELS = [1000, 850, 500]  # hPa, for a variable that has them
+
+
+def climate_dataset(*, levels: bool = False) -> xr.Dataset:
+    """The monthly temperature grid. Each year's mean rises by exactly CLIMATE_TREND / 10 K:
+    the seasonal cycle averages to zero over every whole year."""
+    months = pd.date_range(f"{CLIMATE_START}-01-01", periods=CLIMATE_YEARS * 12, freq="MS")
+    years = (months.year - CLIMATE_START) + (months.month - 0.5) / 12
+    season = CLIMATE_SEASON * np.cos(2 * np.pi * (months.month - 7) / 12)
+    seasonal = CLIMATE_BASE + CLIMATE_TREND / 10 * np.asarray(years) + np.asarray(season)
+    north = CLIMATE_LAPSE * (CLIMATE_LATS - 37.0)
+    by_latitude = seasonal[:, None, None] - north[None, :, None]  # time, latitude, 1
+    values = np.repeat(by_latitude, len(CLIMATE_LONS), axis=2)
+    dims = ["valid_time", "latitude", "longitude"]
+    coords: dict[str, object] = {
+        "valid_time": months,
+        "latitude": (
+            "latitude",
+            CLIMATE_LATS,
+            {"units": "degrees_north", "standard_name": "latitude"},
+        ),
+        "longitude": (
+            "longitude",
+            CLIMATE_LONS,
+            {"units": "degrees_east", "standard_name": "longitude"},
+        ),
+    }
+    if levels:  # colder aloft: 6.5 K per km, roughly 1.5 km per 150 hPa
+        drop = np.array([0.0, 9.75, 35.0])
+        values = values[:, None, :, :] - drop[None, :, None, None]
+        dims = ["valid_time", "pressure_level", "latitude", "longitude"]
+        coords["pressure_level"] = ("pressure_level", CLIMATE_LEVELS, {"units": "hPa"})
+    t2m = xr.DataArray(
+        values.astype("float32"),
+        dims=dims,
+        attrs={
+            "units": "K",
+            "long_name": "2 metre temperature",
+            "standard_name": "air_temperature",
+        },
+    )
+    return xr.Dataset({"t" if levels else "t2m": t2m}, coords=coords)
+
+
+def write_climate_netcdf(path: Path, *, levels: bool = False) -> Path:
+    climate_dataset(levels=levels).to_netcdf(path, engine="netcdf4")
+    return path
+
+
+def write_climate_zarr(path: Path) -> Path:
+    # Zarr format 2 with consolidated metadata, as the public ERA5 archives are stored.
+    climate_dataset().to_zarr(path, mode="w", zarr_format=2, consolidated=True)
+    return path
+
+
+def write_climate_0_360_netcdf(path: Path) -> Path:
+    """The climate grid placed across the 0 meridian on longitudes that run from 0 to 360."""
+    ds = climate_dataset()
+    ds = ds.assign_coords(longitude=np.round(np.arange(355.0, 357.01, 0.25), 2))
+    ds["longitude"].attrs = {"units": "degrees_east", "standard_name": "longitude"}
+    ds.to_netcdf(path, engine="netcdf4")
+    return path
+
+
+def write_projected_netcdf(path: Path) -> Path:
+    """A UTM 33N grid of the ramp's values with a CF grid_mapping, as a model might write it."""
+    x0, y0 = ORIGIN
+    xs = x0 + 5 + 10 * np.arange(RAMP_COLS)
+    ys = y0 - 5 - 10 * np.arange(RAMP_ROWS)
+    values = np.tile(np.arange(RAMP_COLS, dtype="float32"), (RAMP_ROWS, 1))
+    crs = CRS.from_user_input(UTM33N)
+    ds = xr.Dataset(
+        {"value": (("y", "x"), values, {"grid_mapping": "crs", "units": "1"})},
+        coords={
+            "x": ("x", xs, {"standard_name": "projection_x_coordinate", "units": "m"}),
+            "y": ("y", ys, {"standard_name": "projection_y_coordinate", "units": "m"}),
+        },
+    )
+    ds["crs"] = xr.DataArray(0, attrs=crs.to_cf())
+    ds.to_netcdf(path, engine="netcdf4")
+    return path
+
+
+def write_noleap_netcdf(path: Path) -> Path:
+    """The climate grid on a 365-day calendar, as climate models often keep time."""
+    ds = climate_dataset().isel(valid_time=slice(0, 12))
+    days = np.arange(12) * 30.0
+    ds = ds.assign_coords(valid_time=("valid_time", days))
+    ds["valid_time"].attrs = {"units": f"days since {CLIMATE_START}-01-01", "calendar": "noleap"}
+    ds.to_netcdf(path, engine="netcdf4")
+    return path

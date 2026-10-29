@@ -1,5 +1,7 @@
 """The `validate` tool: geospatial checks on one or more data_refs, as a pass/warn/fail report."""
 
+from dataclasses import replace
+
 import xarray as xr
 
 from loci import provenance
@@ -13,7 +15,7 @@ from loci.checks.runner import (
 )
 from loci.errors import LociError
 from loci.models import ValidationReport
-from loci.summary.raster import DEFAULT_MAX_PIXELS, StatsSource
+from loci.summary.raster import DEFAULT_MAX_PIXELS
 from loci.tools.common import stats_source
 from loci.workspace import Workspace
 
@@ -89,5 +91,5 @@ def _layer(ws: Workspace, data_ref: str, max_pixels: int) -> Layer:
     if isinstance(data, xr.Dataset):
         source = stats_source(record, data, max_pixels)
         # compute() returns a loaded copy; load() would make the cached dataset eager in place.
-        sample = StatsSource(source.ds.compute(), source.method, source.decimation)
+        sample = replace(source, ds=source.ds.compute())
     return Layer(data_ref, data, record.crs_source, sample)

@@ -43,7 +43,9 @@ class ReadOptions(_Model):
     layer, x_col, y_col and crs apply to files; bands, resolution, bbox, output_crs, resampling
     and drop_offset to pixels loaded from STAC items. drop_offset is True to leave the items'
     declared offsets out, False or None to apply them, and "auto" to decide from the items when
-    loading; a stored record always holds the decision, never "auto" (D-046).
+    loading; a stored record always holds the decision, never "auto" (D-046). For gridded data
+    (NetCDF, Zarr), bands names the variables, bbox cuts out an area, and select picks along
+    other dimensions: one value each, or [start, end] for time (D-051).
     """
 
     layer: str | None = None
@@ -56,6 +58,7 @@ class ReadOptions(_Model):
     output_crs: str | None = None
     resampling: str | None = None
     drop_offset: bool | Literal["auto"] | None = None
+    select: dict[str, str | float | list[str]] | None = None
 
 
 class CRSInfo(_Model):
@@ -93,6 +96,8 @@ class BandSummary(_Model):
     nodata: float | None
     scale: float | None = None
     offset: float | None = None
+    units: str | None = None  # as declared by the source, e.g. "K" or "kg m-2 s-1"
+    long_name: str | None = None
     stats: BandStats | None = None
 
 
@@ -117,6 +122,7 @@ class RasterSummary(_Model):
     bands_omitted: int = 0
     stats_method: StatsMethod | None = None
     stats_decimation: int | None = None
+    stats_time_step: int | None = None  # statistics read one time step in every N
 
 
 class NumericStats(_Model):

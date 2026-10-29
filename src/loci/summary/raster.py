@@ -25,18 +25,22 @@ from loci.summary.common import counted, crs_info, extent, iso, sig, take_within
 
 DEFAULT_MAX_PIXELS = 4_000_000
 MAX_BANDS = 20
+MAX_TIME_SAMPLE = 24  # time steps read for statistics; longer stacks are sampled evenly
 
 
 @dataclass(frozen=True)
 class StatsSource:
     """The data statistics are computed from, and how it relates to the full raster.
 
-    `decimation` is the step between sampled pixels along x and y (1 for every pixel).
+    `decimation` is the step between sampled pixels along x and y (1 for every pixel), and
+    `time_step` the step between sampled time steps: a long stack such as an hourly reanalysis is
+    stored a step or a few at a time, so reading every step would read all of it.
     """
 
     ds: xr.Dataset
     method: StatsMethod
     decimation: int
+    time_step: int = 1
 
 
 def pixels_per_band(ds: xr.Dataset) -> int:
@@ -57,12 +61,17 @@ def decimation_for(ds: xr.Dataset, max_pixels: int) -> int:
 
 
 def plan_stats(ds: xr.Dataset, max_pixels: int = DEFAULT_MAX_PIXELS) -> StatsSource:
-    """Every pixel if the raster is small enough, otherwise a strided sample."""
+    """Every pixel if the raster is small enough, otherwise a strided sample, of at most
+    MAX_TIME_SAMPLE evenly spaced time steps."""
+    time_step = 1
+    if "time" in ds.dims and ds.sizes["time"] > MAX_TIME_SAMPLE:
+        time_step = math.ceil(ds.sizes["time"] / MAX_TIME_SAMPLE)
+        ds = ds.isel(time=slice(None, None, time_step))
     step = decimation_for(ds, max_pixels)
     if step == 1:
-        return StatsSource(ds, "exact", 1)
+        return StatsSource(ds, "exact" if time_step == 1 else "strided", 1, time_step)
     sample = ds.isel(x=slice(None, None, step), y=slice(None, None, step))
-    return StatsSource(sample, "strided", step)
+    return StatsSource(sample, "strided", step, time_step)
 
 
 def valid_mask(values: np.ndarray, nodata: float | None) -> np.ndarray:
@@ -131,6 +140,7 @@ def summarise_raster(
         bands_omitted=len(names) - len(bands),
         stats_method=stats.method if stats else None,
         stats_decimation=stats.decimation if stats else None,
+        stats_time_step=stats.time_step if stats and stats.time_step > 1 else None,
     )
 
 
@@ -157,10 +167,15 @@ def raster_notes(summary: RasterSummary) -> list[str]:
             f"Statistics come from overviews at 1/{summary.stats_decimation} resolution, so "
             "extremes and valid fractions are approximate."
         )
-    elif summary.stats_method == "strided":
+    elif summary.stats_method == "strided" and (summary.stats_decimation or 1) > 1:
         notes.append(
             f"Statistics come from one pixel in every {summary.stats_decimation} along x and y, "
             "so extremes and valid fractions are approximate."
+        )
+    if summary.stats_time_step:
+        notes.append(
+            f"Statistics come from one time step in every {summary.stats_time_step}, so they "
+            "describe the period roughly."
         )
     if any(b.scale is not None or b.offset is not None for b in summary.bands):
         notes.append(
@@ -179,12 +194,15 @@ def _band_summary(da: xr.DataArray, sample: xr.DataArray | None) -> BandSummary:
     nodata = _float_or_none(da.rio.nodata)
     scale = _float_or_none(da.attrs.get("scale_factor"))
     offset = _float_or_none(da.attrs.get("add_offset"))
+    units, long_name = da.attrs.get("units"), da.attrs.get("long_name")
     return BandSummary(
         name=str(da.name),
         dtype=str(da.dtype),
         nodata=nodata,
         scale=None if scale in (None, 1.0) else sig(scale),
         offset=None if offset in (None, 0.0) else sig(offset),
+        units=str(units)[:40] if units else None,
+        long_name=str(long_name)[:80] if long_name else None,
         stats=band_stats(np.asarray(sample.values), nodata) if sample is not None else None,
     )
 

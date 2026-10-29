@@ -26,6 +26,12 @@ SUFFIXES: dict[str, Format] = {
     ".parquet": Format("vector", "parquet"),
     ".geoparquet": Format("vector", "parquet"),
     ".csv": Format("vector", "csv"),
+    ".nc": Format("raster", "netcdf"),
+    ".nc4": Format("raster", "netcdf"),
+    ".netcdf": Format("raster", "netcdf"),
+    ".zarr": Format("raster", "zarr"),  # a folder, or a URL of one
+    ".zarr-v2": Format("raster", "zarr"),
+    ".zarr-v3": Format("raster", "zarr"),
 }
 
 # Formats read as tables of coordinates rather than as geometries. Parquet files without

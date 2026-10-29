@@ -7,6 +7,7 @@ from its stored options, so both paths behave identically.
 from loci.errors import LoadError
 from loci.io.common import Data, ReadResult
 from loci.io.formats import TABLE_FORMATS, Format, detect_format, is_remote
+from loci.io.gridded import GRIDDED, open_gridded
 from loci.io.raster import open_raster
 from loci.io.stac import load_stac, read_stac_items
 from loci.io.table import read_points_table
@@ -37,6 +38,8 @@ def read(uri: str, fmt: Format, options: ReadOptions) -> ReadResult:
         return read_stac_items(uri, fmt.name, options)
     if fmt == STAC_RASTER:
         return load_stac(uri, fmt.name, options)
+    if fmt.name in GRIDDED:
+        return open_gridded(uri, fmt.name, options)
     if fmt.kind == "raster":
         return open_raster(uri, fmt.name, options)
     if fmt.name == "csv":
@@ -63,11 +66,15 @@ def _check_options(fmt: Format, options: ReadOptions) -> None:
                 "then reprojected).",
             )
         return
-    misplaced = sorted(given & set(STAC_OPTIONS))
+    # Gridded data take variables (bands=), an area (bbox=) and choices along dimensions.
+    shared = {"bands", "bbox"} if fmt.name in GRIDDED else set()
+    misplaced = sorted(given & (set(STAC_OPTIONS) - shared))
     if misplaced:
         raise LoadError(
             f"{', '.join(o + '=' for o in misplaced)} apply only to STAC items from stac_search."
         )
+    if options.select is not None and fmt.name not in GRIDDED:
+        raise LoadError("select= applies only to gridded data: NetCDF files and Zarr stores.")
     if options.layer is not None and (fmt.kind == "raster" or fmt.name in TABLE_FORMATS):
         raise LoadError(
             "layer= applies only to vector files with layers (GeoPackage, GeoJSON, Shapefile "
