@@ -13,6 +13,7 @@ import type {
   LayerDisplay,
   LayerInfo,
   MapFocus,
+  ModelList,
   PointValues,
   Proposal,
   ProviderInfo,
@@ -50,6 +51,18 @@ function usable(providers: ProviderInfo[], id: string | null): id is string {
   return found !== null && found.provider.configured;
 }
 
+/** The model to use: the current one if it can be used, else the default, else the first model
+ * of a provider that is set up; with none set up, the default, so the app says how to set it up. */
+function modelFor(list: ModelList, current: string | null): string {
+  if (usable(list.providers, current)) return current;
+  if (usable(list.providers, list.default)) return list.default;
+  return list.providers.find((p) => p.configured)?.models[0]?.id ?? list.default;
+}
+
+/** An API error with its hint, for a message shown in the app. */
+const withHint = (e: unknown) =>
+  new Error(e instanceof ApiError && e.hint ? `${e.message} ${e.hint}` : message(e));
+
 /** A layer's display at another time step: same bands and stretch, so dates compare. */
 function atStep(display: LayerDisplay, step: number | undefined): LayerDisplay {
   if (step == null || display.step == null || step === display.step) return display;
@@ -80,6 +93,8 @@ export function App() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [model, setModel] = useState<string>(() => storedModel() ?? "");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [point, setPoint] = useState<[number, number] | null>(null);
   const [values, setValues] = useState<PointValues | null>(null);
   const [pointError, setPointError] = useState<string | null>(null);
@@ -139,16 +154,45 @@ export function App() {
     }
   }, []);
 
-  const refreshModels = useCallback(() => {
-    api.models().then(
-      (m) => {
-        setProviders(m.providers);
-        setModelsError(null);
-        setModel((current) => (usable(m.providers, current) ? current : m.default));
-      },
-      (e) => setModelsError(e instanceof ApiError && e.hint ? `${e.message} ${e.hint}` : message(e)),
-    );
+  const showModels = useCallback((list: ModelList) => {
+    setProviders(list.providers);
+    setModelsError(null);
+    setModel((current) => modelFor(list, current));
   }, []);
+
+  const refreshModels = useCallback(() => {
+    api.models().then(showModels, (e) => setModelsError(withHint(e).message));
+  }, [showModels]);
+
+  const openPicker = useCallback(
+    (open: boolean) => {
+      if (open) refreshModels();
+      setPickerOpen(open);
+    },
+    [refreshModels],
+  );
+
+  const saveKey = useCallback(
+    async (provider: string, key: string) => {
+      try {
+        showModels(await api.saveKey(provider, key));
+      } catch (e) {
+        throw withHint(e);
+      }
+    },
+    [showModels],
+  );
+
+  const forgetKey = useCallback(
+    async (provider: string) => {
+      try {
+        showModels(await api.forgetKey(provider));
+      } catch (e) {
+        setModelsError(withHint(e).message);
+      }
+    },
+    [showModels],
+  );
 
   const chooseModel = useCallback((next: string) => {
     setModel(next);
@@ -163,7 +207,13 @@ export function App() {
     refreshModels();
     fetch("/api/project")
       .then((r) => r.json())
-      .then((p) => setProject(p.project), () => undefined);
+      .then(
+        (p) => {
+          setProject(p.project);
+          setSuggestions(p.suggestions ?? []);
+        },
+        () => undefined,
+      );
     void refreshLayers();
     const refreshScripts = () => api.scripts().then(setScripts, () => undefined);
     void refreshScripts();
@@ -317,6 +367,7 @@ export function App() {
 
   const chosen = selected ? byRef.get(selected) ?? null : null;
   const chosenModel = findModel(providers, model);
+  const unset = chosenModel && !chosenModel.provider.configured ? chosenModel.provider : null;
   const inspected = values ? shown[values.data_ref] : undefined;
   const matches = finder.trim()
     ? layers.filter((l) => `${l.name} ${l.data_ref}`.toLowerCase().includes(finder.toLowerCase())).slice(0, 6)
@@ -454,8 +505,11 @@ export function App() {
             providers={providers}
             value={model}
             error={modelsError}
-            onOpen={refreshModels}
+            open={pickerOpen}
+            onOpenChange={openPicker}
             onChange={chooseModel}
+            onSaveKey={saveKey}
+            onForgetKey={forgetKey}
           />
         </div>
         <AgentPanel
@@ -463,6 +517,9 @@ export function App() {
           model={model}
           modelLabel={chosenModel?.model.label ?? model}
           engine={chosenModel?.provider.engine ?? "claude"}
+          setUp={unset}
+          onSetUp={() => openPicker(true)}
+          suggestions={suggestions}
           layers={layers}
           byRef={byRef}
           selected={chosen}

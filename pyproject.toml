@@ -26,6 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
+loci = "loci.cli:main"
 loci-mcp = "loci.server:main"
 loci-hook = "loci.hooks:main"
 loci-app = "loci.web.app:main"
@@ -50,7 +51,7 @@ line-length = 100
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-files = ["src", "tests", "benchmarks"]
+files = ["src", "tests", "benchmarks", "scripts"]
 disallow_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true

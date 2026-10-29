@@ -150,7 +150,7 @@ class Agent:
             "type": "stdio",
             "command": sys.executable,
             "args": ["-m", "loci.server"],
-            "env": {ROOT_ENV: str(self.ws.root)},
+            "env": {ROOT_ENV: str(self.ws.root), "PYTHONUTF8": "1"},
         }
 
         async def can_use(
@@ -221,7 +221,7 @@ class Agent:
             return PermissionResultDeny(message=self._outside())
         if name == "Read" or not file.exists():
             return PermissionResultAllow()  # reading a script, or writing a new one
-        before = file.read_text()
+        before = file.read_text(encoding="utf-8")
         after = proposed(name, before, arguments)
         if after is None or after == before:
             return PermissionResultAllow()  # nothing to review; the tool reports any error itself
@@ -244,7 +244,7 @@ class Agent:
             proposal = {
                 "kind": "run",
                 "path": self.relative(file),
-                "code": file.read_text(),
+                "code": file.read_text(encoding="utf-8"),
                 "inputs": arguments.get("inputs") or {},
                 "parameters": arguments.get("parameters"),
             }
@@ -316,7 +316,7 @@ class Agent:
         return file
 
     def relative(self, file: Path) -> str:
-        return str(file.relative_to(self.folder))
+        return file.relative_to(self.folder).as_posix()  # the app's paths use /, on Windows too
 
     def shown(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """A tool call's arguments as the app shows them: script paths relative to the project."""

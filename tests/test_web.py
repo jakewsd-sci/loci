@@ -13,17 +13,20 @@ from rasterio.transform import from_origin
 from starlette.testclient import TestClient
 
 from loci import synthetic as syn
+from loci.demo import write_demo
 from loci.tools.load import load
 from loci.tools.stac_search import stac_search
-from loci.web.app import create_app
+from loci.web.app import DEFAULT_PORT, create_app
 from loci.workspace import Workspace
+
+LOCAL_URL = f"http://127.0.0.1:{DEFAULT_PORT}"  # the app answers to its own names
 
 TMS = morecantile.tms.get("WebMercatorQuad")
 
 
 @pytest.fixture
 def client(ws: Workspace) -> TestClient:
-    return TestClient(create_app(ws))
+    return TestClient(create_app(ws), base_url=LOCAL_URL)
 
 
 def _lonlat(x: float, y: float) -> tuple[float, float]:
@@ -246,6 +249,43 @@ def test_the_built_web_app_is_served_at_the_root(ws: Workspace, tmp_path: Path) 
     dist.mkdir()
     (dist / "index.html").write_text("<!doctype html><title>loci</title>")
 
-    page = TestClient(create_app(ws, dist=dist)).get("/")
+    page = TestClient(create_app(ws, dist=dist), base_url=LOCAL_URL).get("/")
 
     assert page.status_code == 200 and "<title>loci</title>" in page.text
+
+
+def test_only_this_computers_own_pages_can_use_the_app(ws: Workspace) -> None:
+    app = create_app(ws)
+    local = TestClient(app, base_url=LOCAL_URL)
+    rebound = TestClient(app, base_url="http://attacker.example:8765")
+
+    foreign_host = rebound.get("/api/layers")
+    cross_site = local.post(
+        "/api/agent/decide",
+        json={"id": "p-00000000", "accepted": True},
+        headers={"Origin": "https://attacker.example"},
+    )
+    same_site = local.post(
+        "/api/agent/decide",
+        json={"id": "p-00000000", "accepted": True},
+        headers={"Origin": LOCAL_URL},
+    )
+
+    assert foreign_host.status_code == 403  # a page that rebinds its name to this computer
+    assert cross_site.status_code == 403  # a page elsewhere asking for a change
+    assert same_site.status_code == 404  # let through; nothing waits under that id
+    assert local.get("/api/layers").status_code == 200  # tools and tests send no Origin
+    assert TestClient(app, base_url="http://localhost:5173").get("/api/layers").status_code == 200
+
+
+def test_a_demo_project_offers_its_questions(ws: Workspace, tmp_path: Path) -> None:
+    project = tmp_path / "demo"
+    write_demo(project)
+
+    plain = TestClient(create_app(ws), base_url=LOCAL_URL).get("/api/project").json()
+    demo = TestClient(create_app(ws, project_dir=project), base_url=LOCAL_URL)
+    offered = demo.get("/api/project").json()["suggestions"]
+
+    assert plain["suggestions"] == []
+    assert offered[0].startswith("data/dem.tif is an elevation model")
+    assert len(offered) == 5

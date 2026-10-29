@@ -1,39 +1,46 @@
-"""Which providers and models the app offers, from the environment and the user's config file."""
+"""Which providers and models the app offers, from the environment and the user's settings."""
 
+import json
+import os
 from pathlib import Path
 
 import pytest
 
 from loci.errors import LociError
 from loci.web.providers import (
+    BY_ID,
     DEFAULT_MODEL,
     Settings,
     config_path,
+    configured,
+    forget_key,
     load_settings,
     providers,
     resolve,
+    save_key,
 )
 
 
 def _settings(tmp_path: Path, config: str = "", **env: str) -> Settings:
-    path = tmp_path / "config.toml"
-    if config:
-        path.write_text(config)
-    return load_settings({"LOCI_CONFIG": str(path), **env})
+    (tmp_path / "config.toml").write_text(config, encoding="utf-8")
+    return load_settings({"LOCI_CONFIG": str(tmp_path / "config.toml"), **env})
 
 
-def test_claude_is_always_offered_and_other_providers_once_they_have_a_key(
-    tmp_path: Path,
-) -> None:
+def test_providers_are_offered_once_they_have_a_key(tmp_path: Path) -> None:
     settings = _settings(tmp_path, OPENAI_API_KEY="sk-test")
 
     listed = {p.id: p for p in providers(settings)}
 
     assert list(listed) == ["claude", "openai", "google", "openrouter"]
-    assert listed["claude"].configured and listed["claude"].route == "Anthropic"
     assert listed["openai"].configured and listed["openai"].setup is None
-    assert not listed["google"].configured
-    assert listed["google"].setup is not None and "GEMINI_API_KEY" in listed["google"].setup
+    assert listed["openai"].key_source == "environment"
+    assert not listed["claude"].configured and listed["claude"].route == "Anthropic"
+    assert listed["claude"].setup == (
+        "Paste an Anthropic API key in the model menu, or set ANTHROPIC_API_KEY before "
+        "starting loci."
+    )
+    assert not listed["google"].configured and "GEMINI_API_KEY" in str(listed["google"].setup)
+    assert all(p.keys_url.startswith("https://") for p in listed.values())
     assert [m.id for m in listed["claude"].models] == [
         "claude:opus",
         "claude:sonnet",
@@ -43,14 +50,25 @@ def test_claude_is_always_offered_and_other_providers_once_they_have_a_key(
     assert DEFAULT_MODEL == "claude:opus"
 
 
+def test_claude_takes_an_anthropic_key_unless_reached_another_way(tmp_path: Path) -> None:
+    keyed = resolve("claude:sonnet", _settings(tmp_path, ANTHROPIC_API_KEY="sk-ant-x"))
+    gateway = resolve("claude:sonnet", _settings(tmp_path, ANTHROPIC_BASE_URL="https://gw.test"))
+    bedrock = resolve("claude:opus", _settings(tmp_path, '[claude]\nroute = "bedrock"\n'))
+
+    with pytest.raises(LociError, match="Claude is not set up") as unset:
+        resolve("claude:opus", _settings(tmp_path))
+    assert (keyed.model, dict(keyed.env)) == ("sonnet", {"ANTHROPIC_API_KEY": "sk-ant-x"})
+    assert dict(gateway.env) == {}  # Claude Code finds the gateway in its own environment
+    assert dict(bedrock.env) == {"CLAUDE_CODE_USE_BEDROCK": "1"}
+    assert unset.value.hint is not None and "ANTHROPIC_API_KEY" in unset.value.hint
+
+
 def test_models_resolve_to_their_engine_and_key(tmp_path: Path) -> None:
-    settings = _settings(tmp_path, GEMINI_API_KEY="g-env")
+    settings = _settings(tmp_path, GEMINI_API_KEY="g-env", OPENROUTER_API_KEY="or")
 
-    claude = resolve("claude:sonnet", settings)
     gemini = resolve("google:gemini-3.8-flash", settings)
-    routed = resolve("openrouter:qwen/qwen3.8-flash", _settings(tmp_path, OPENROUTER_API_KEY="or"))
+    routed = resolve("openrouter:qwen/qwen3.8-flash", settings)
 
-    assert (claude.provider.engine, claude.model, claude.route) == ("claude", "sonnet", "anthropic")
     assert (gemini.provider.engine, gemini.model, gemini.api_key) == (
         "loop",
         "gemini-3.8-flash",
@@ -89,26 +107,55 @@ models = ["gpt-6-luna", { id = "gpt-6-astra", label = "Astra", note = "Best" }]
     claude = resolve("claude:opus", settings)
     openai = resolve("openai:gpt-6-luna", settings)
 
-    assert listed["claude"].route == "Amazon Bedrock"
+    assert listed["claude"].route == "Amazon Bedrock" and listed["claude"].configured
     assert dict(claude.env) == {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "ap-southeast-2"}
     assert [(m.id, m.label, m.note) for m in listed["openai"].models] == [
         ("openai:gpt-6-luna", "gpt-6-luna", ""),
         ("openai:gpt-6-astra", "Astra", "Best"),
     ]
     assert openai.api_key == "sk-env"  # the environment wins over the file
-    assert resolve("openai:x", _settings(tmp_path, config)).api_key == "sk-file"
+    from_file = _settings(tmp_path, config)
+    assert resolve("openai:x", from_file).api_key == "sk-file"
+    assert {p.id: p.key_source for p in providers(from_file)}["openai"] == "config"
 
 
-def test_a_broken_config_file_is_an_error_naming_it(tmp_path: Path) -> None:
+def test_keys_pasted_in_the_app_are_kept_for_the_user_only(tmp_path: Path) -> None:
+    openrouter, openai = BY_ID["openrouter"], BY_ID["openai"]
+    save_key(openrouter, "  sk-or-v1-0123456789  ", _settings(tmp_path))
+
+    saved = _settings(tmp_path)
+    listed = {p.id: p for p in providers(saved)}
+    keys_file = tmp_path / "keys.toml"
+
+    assert listed["openrouter"].configured and listed["openrouter"].key_source == "app"
+    assert resolve("openrouter:qwen/qwen3.8-flash", saved).api_key == "sk-or-v1-0123456789"
+    assert "sk-or" not in json.dumps([p.model_dump() for p in providers(saved)])
+    assert "sk-or-v1-0123456789" in keys_file.read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert keys_file.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(LociError, match="does not look like an API key"):
+        save_key(openai, "sk with spaces", saved)
+    with pytest.raises(LociError, match="comes from OPENAI_API_KEY"):
+        forget_key(openai, _settings(tmp_path, OPENAI_API_KEY="sk-env"))
+    forget_key(openrouter, saved)
+    assert not configured(openrouter, _settings(tmp_path))
+
+
+def test_a_broken_settings_file_is_an_error_naming_it(tmp_path: Path) -> None:
     bad_route = _settings(tmp_path, '[claude]\nroute = "pigeon"\n')
 
     with pytest.raises(LociError, match="Unknown Claude route 'pigeon'"):
         resolve("claude:opus", bad_route)
-    (tmp_path / "config.toml").write_text("[openai\n")
+    (tmp_path / "config.toml").write_text("[openai\n", encoding="utf-8")
     with pytest.raises(LociError, match="Cannot read the loci config file"):
         load_settings({"LOCI_CONFIG": str(tmp_path / "config.toml")})
 
 
-def test_the_config_file_lives_in_the_users_config_folder(tmp_path: Path) -> None:
-    assert config_path({"XDG_CONFIG_HOME": str(tmp_path)}) == tmp_path / "loci" / "config.toml"
+def test_settings_live_in_the_users_own_settings_folder(tmp_path: Path) -> None:
+    appdata = r"C:\Users\ana\AppData\Roaming"
+
+    assert config_path({"XDG_CONFIG_HOME": str(tmp_path)}, windows=False) == (
+        tmp_path / "loci" / "config.toml"
+    )
+    assert config_path({"APPDATA": appdata}, windows=True) == Path(appdata) / "loci" / "config.toml"
     assert config_path({"LOCI_CONFIG": "~/x.toml"}) == Path.home() / "x.toml"

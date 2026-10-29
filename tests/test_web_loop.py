@@ -45,7 +45,7 @@ from loci.workspace import Workspace
 
 SCRIPT = "from loci import script\nprint(script.read('stack'))\n"
 DOUBLE = "from loci import script\nscript.save(script.read('dem') * 2, 'doubled.tif')\n"
-KEYS = {"OPENAI_API_KEY": "sk-test", "GEMINI_API_KEY": "g-test"}
+KEYS = {"OPENAI_API_KEY": "sk-test", "GEMINI_API_KEY": "g-test", "ANTHROPIC_API_KEY": "sk-ant"}
 
 
 class Scripted:
@@ -341,7 +341,7 @@ def test_a_providers_refusal_arrives_in_plain_words(ws: Workspace, project: Path
     error = _answer(agent)[-1]
 
     assert error["message"] == "OpenAI did not accept the API key (401): Incorrect API key provided"
-    assert "[openai]" in error["hint"] and "OPENAI_API_KEY" in error["hint"]
+    assert "model menu" in error["hint"] and "OPENAI_API_KEY" in error["hint"]
 
 
 def _openai_reply(first: bool, uri: str) -> dict[str, Any]:

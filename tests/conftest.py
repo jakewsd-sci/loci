@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ from loci import synthetic
 from loci.checks.core import Layer
 from loci.io import detect_format, read
 from loci.models import ReadOptions
-from loci.web.providers import PROVIDERS
+from loci.web.providers import CLAUDE_GATEWAYS, PROVIDERS
 from loci.workspace import Workspace
 
 MakeLayer = Callable[..., Layer]
@@ -19,11 +20,16 @@ MakeLayer = Callable[..., Layer]
 def _no_user_settings(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tests never read the developer's own loci config file or model providers' keys."""
+    """Tests never read the developer's own loci settings or other providers' keys. Claude
+    counts as set up, as a scripted agent stands in for it; real Claude sessions (-m claude)
+    keep whatever Anthropic credentials the environment has."""
     monkeypatch.setenv("LOCI_CONFIG", str(tmp_path_factory.getbasetemp() / "no-config.toml"))
     for provider in PROVIDERS:
-        for key in provider.keys:
-            monkeypatch.delenv(key, raising=False)
+        if provider.id != "claude":
+            for key in provider.keys:
+                monkeypatch.delenv(key, raising=False)
+    if not any(os.environ.get(n) for n in ("ANTHROPIC_API_KEY", *CLAUDE_GATEWAYS)):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-placeholder-for-tests")
 
 
 @pytest.fixture
