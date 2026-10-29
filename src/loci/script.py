@@ -30,12 +30,12 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import rasterio
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
 
 from loci.errors import LociError
 from loci.io import Data
+from loci.io.write import write_geotiff
 from loci.workspace import Workspace
 
 RUN_DIR_ENV = "LOCI_RUN_DIR"
@@ -112,7 +112,7 @@ def physical(da: xr.DataArray) -> xr.DataArray:
 
 def warn(message: str) -> None:
     """Record a warning that run reports in its result (and prints it to stderr)."""
-    with (run_dir() / WARNINGS_FILE).open("a") as f:
+    with (run_dir() / WARNINGS_FILE).open("a", encoding="utf-8") as f:
         f.write(message.replace("\n", " ") + "\n")
     print(f"loci.script warning: {message}", file=sys.stderr)
 
@@ -132,7 +132,8 @@ def save(obj: Any, filename: str) -> Path:
     path = output_path(filename)
     suffix = path.suffix.lower()
     if isinstance(obj, xr.Dataset | xr.DataArray) and suffix in {".tif", ".tiff"}:
-        write_geotiff(obj, path)
+        for note in write_geotiff(obj, path):
+            warn(f"{path.name}: {note}")
     elif isinstance(obj, gpd.GeoDataFrame) and suffix in VECTOR_SUFFIXES:
         if suffix == ".parquet":
             obj.to_parquet(path)
@@ -152,74 +153,3 @@ def save(obj: Any, filename: str) -> Path:
             "DataFrames to .csv or .parquet; dicts and lists to .json."
         )
     return path
-
-
-def write_geotiff(data: xr.Dataset | xr.DataArray, path: Path) -> None:
-    """One band per data variable, named by band descriptions, with CRS, nodata and scaling."""
-    ds = (
-        data.to_dataset(name=str(data.name or "band_1")) if isinstance(data, xr.DataArray) else data
-    )
-    if "time" in ds.dims:
-        if ds.sizes["time"] != 1:
-            raise ValueError(
-                f"A GeoTIFF holds one time step, but this has {ds.sizes['time']}. Reduce over "
-                "time (e.g. .median('time')) or save each step to its own file."
-            )
-        ds = ds.isel(time=0, drop=True)
-    names = [str(n) for n in ds.data_vars]
-    bands = [ds[n].transpose("y", "x") for n in names]
-    dtype = np.result_type(*[b.dtype for b in bands])
-    dtype = np.dtype("uint8") if dtype.kind == "b" else dtype
-    nodata = _nodata(bands[0], path.name)
-    if nodata is None and np.issubdtype(dtype, np.floating):
-        nodata = float("nan")
-    height, width = bands[0].shape
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=len(bands),
-        dtype=dtype.name,
-        crs=ds.rio.crs,
-        transform=ds.rio.transform(),
-        nodata=nodata,
-        compress="deflate",
-    ) as dst:
-        for i, (name, band) in enumerate(zip(names, bands, strict=True), start=1):
-            dst.write(np.asarray(band.values).astype(dtype), i)
-            dst.set_band_description(i, name)
-        dst.scales, dst.offsets = _packing(names, bands, dtype, path.name)
-
-
-def _nodata(band: xr.DataArray, filename: str) -> float | None:
-    """The band's nodata. Integer bands cannot hold a NaN nodata, which they inherit through
-    arithmetic on float bands (e.g. a count of valid pixels); it is left out, with a warning."""
-    try:
-        nodata: float | None = band.rio.nodata
-    except ValueError:
-        warn(
-            f"{filename}: integer band(s) carry a NaN nodata, probably inherited from float inputs "
-            "through arithmetic. It was not written, since integers cannot be NaN."
-        )
-        return None
-    return nodata
-
-
-def _packing(
-    names: list[str], bands: list[xr.DataArray], dtype: np.dtype, filename: str
-) -> tuple[list[float], list[float]]:
-    """Scale and offset to write: kept for integer bands (packing), dropped for float bands."""
-    scales = [float(b.attrs.get("scale_factor", 1.0)) for b in bands]
-    offsets = [float(b.attrs.get("add_offset", 0.0)) for b in bands]
-    if dtype.kind in "iu":
-        return scales, offsets
-    inherited = [n for n, s, o in zip(names, scales, offsets, strict=True) if (s, o) != (1.0, 0.0)]
-    if inherited:
-        warn(
-            f"{filename}: float band(s) {inherited} carry scale_factor/add_offset attributes, "
-            "probably inherited from raw inputs through arithmetic. They were not written: float "
-            "outputs are stored as physical values. Use script.physical() on raw bands first."
-        )
-    return [1.0] * len(bands), [0.0] * len(bands)

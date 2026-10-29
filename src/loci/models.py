@@ -274,7 +274,7 @@ class ValidationReport(_Model):
     checks: list[CheckResult]
 
 
-ProducedBy = Literal["load", "stac_search", "run"]
+ProducedBy = Literal["load", "stac_search", "run", "export"]
 
 
 class SourceInput(_Model):
@@ -374,4 +374,14 @@ class LineageResult(_Model):
     stac_item_count: int
     stac_items: list[str]
     warnings: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ExportResult(_Model):
+    """A data_ref written to a file as it is held, with a provenance sidecar beside it."""
+
+    data_ref: str
+    path: str
+    format: str
+    bytes: int
     notes: list[str] = Field(default_factory=list)
