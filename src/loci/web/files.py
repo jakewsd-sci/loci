@@ -29,6 +29,8 @@ MAX_FILES = 500
 MAX_DEPTH = 6
 # Plain .json is listed only as .geojson: a project's other JSON files are rarely geodata.
 LISTED = {suffix: fmt for suffix, fmt in SUFFIXES.items() if suffix != ".json"}
+STORES = {suffix for suffix, fmt in SUFFIXES.items() if fmt.name == "zarr"}  # folders, read whole
+MAX_STORE_FILES = 2_000  # files counted for a store's size
 # A shapefile comes as several files; they travel together when dropped on the map.
 SIDECARS = {".shx", ".dbf", ".prj", ".cpg", ".qix", ".sbn", ".sbx", ".xml"}
 NAME = re.compile(r"[^\\/:*?\"<>|\x00-\x1f]+")  # a file name, valid on Windows too
@@ -64,7 +66,7 @@ def data_files(project: Path, ws: Workspace) -> DataFiles:
                 path=path.relative_to(project).as_posix(),
                 kind=fmt.kind,
                 format=fmt.name,
-                size=stat.st_size,
+                size=_store_size(path) if path.is_dir() else stat.st_size,
                 modified=datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(timespec="seconds"),
                 data_ref=shown.get(os.path.normcase(str(path.resolve()))),
             )
@@ -75,7 +77,8 @@ def data_files(project: Path, ws: Workspace) -> DataFiles:
 def project_file(project: Path, path: str) -> Path:
     """The file a project-relative path names, if it is inside the project and loci reads it."""
     file = (project / path).resolve()
-    if not file.is_relative_to(project.resolve()) or not file.is_file():
+    store = file.is_dir() and file.suffix.lower() in STORES
+    if not file.is_relative_to(project.resolve()) or not (file.is_file() or store):
         raise LociError(f"No file {path!r} in this project.")
     if file.suffix.lower() not in LISTED:
         raise LociError(
@@ -139,12 +142,25 @@ def _walk(project: Path) -> Iterator[Path]:
     root_depth = len(project.parts)
     for folder, dirs, names in os.walk(project):
         depth = len(Path(folder).parts) - root_depth
+        stores = sorted(d for d in dirs if Path(d).suffix.lower() in STORES)
         dirs[:] = sorted(
-            d for d in dirs if not d.startswith(".") and d not in SKIPPED and depth < MAX_DEPTH
+            d
+            for d in dirs
+            if not d.startswith(".") and d not in SKIPPED and d not in stores and depth < MAX_DEPTH
         )
-        for name in sorted(names):
+        for name in sorted([*names, *stores]):
             if Path(name).suffix.lower() in LISTED and not name.startswith("."):
                 yield Path(folder) / name
+
+
+def _store_size(folder: Path) -> int:
+    """A Zarr store's size, from its first files only, so a huge store does not stall the list."""
+    total = 0
+    for count, path in enumerate(p for p in folder.rglob("*") if p.is_file()):
+        if count == MAX_STORE_FILES:
+            break
+        total += path.stat().st_size
+    return total
 
 
 def _layers_by_file(ws: Workspace) -> dict[str, str]:

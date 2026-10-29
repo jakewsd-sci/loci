@@ -18,13 +18,18 @@ import xarray as xr
 
 from loci.errors import LociError
 
-RASTER_FORMATS = {"geotiff": ".tif"}
+RASTER_FORMATS = {"geotiff": ".tif", "netcdf": ".nc"}
 VECTOR_FORMATS = {"gpkg": ".gpkg", "geojson": ".geojson", "csv": ".csv"}
 MAX_BYTES = 4 * 1024**3  # larger exports belong in a script that saves just what it needs
 
 
-def write_raster(ds: xr.Dataset, path: Path, *, step: int | None = None) -> list[str]:
-    """Write a raster as a GeoTIFF, one band per variable, and a time stack's chosen step."""
+def write_raster(
+    ds: xr.Dataset, path: Path, *, step: int | None = None, fmt: str = "geotiff"
+) -> list[str]:
+    """Write a raster as a GeoTIFF, one band per variable and a time stack's chosen step, or as
+    NetCDF, which holds every time step."""
+    if fmt == "netcdf":
+        return write_netcdf(ds, path)
     notes = []
     if "time" in ds.dims:
         count = ds.sizes["time"]
@@ -50,6 +55,23 @@ def write_raster(ds: xr.Dataset, path: Path, *, step: int | None = None) -> list
             f"A GeoTIFF gives every band one data type: wrote {common} (from {', '.join(dtypes)})."
         )
     return notes + write_geotiff(ds, path)
+
+
+def write_netcdf(ds: xr.Dataset, path: Path) -> list[str]:
+    """Write a raster as CF NetCDF with every time step, its CRS as a grid_mapping, values as
+    stored, and scale, offset and fill value as attributes."""
+    if ds.nbytes > MAX_BYTES:
+        raise LociError(
+            f"This raster is {ds.nbytes / 1024**3:.1f} GB, too large to export from the app.",
+            hint="Write a script that saves only what you need with loci.script.save.",
+        )
+    out = ds.copy()
+    for name in out.data_vars:
+        out[name].encoding = {}  # attributes say how values are stored; nothing is re-encoded
+    if ds.rio.crs is not None:
+        out = out.rio.write_crs(ds.rio.crs)
+    out.to_netcdf(path, engine="netcdf4")
+    return []
 
 
 def write_vector(

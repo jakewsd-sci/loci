@@ -28,16 +28,25 @@ from rio_tiler.utils import render
 
 from loci import provenance
 from loci.errors import LociError
+from loci.io import STAC_RASTER
+from loci.io.formats import is_remote
 from loci.io.stac import SCL_BAND, SCL_CLASSES, SCL_OBSCURED
 from loci.models import Bounds, CheckStatus, ProducedBy, Provenance
+from loci.render import stretch_limits
 from loci.script import physical
 from loci.summary.common import crs_info, extent, iso
+from loci.summary.raster import decimation_for
 from loci.tools.preview import preview, step_cloud_cover
 from loci.workspace import RefRecord, Workspace
 
 TILE_FORMATS = {"geotiff", "cog"}  # files rio-tiler reads directly, overviews and all
 PREVIEW_WIDTH = 1024
 MAX_FRAME_PIXELS = 16_000_000  # pixels per band of one time step held in memory for tiles
+# Bytes a click may read for one band's values through time: a store kept one time step to a
+# chunk, such as an hourly reanalysis, would otherwise be read whole for a single point.
+POINT_BUDGET = {"local": 4 * 1024**3, "remote": 256 * 1024**2}
+STRETCH_STEPS = 8  # dates a time stack's colour scale is taken from
+STRETCH_PIXELS = 1_000_000
 MAX_FRAMES = 8
 MAX_FEATURES = 50_000
 MAX_POINT_FEATURES = 5
@@ -136,7 +145,7 @@ def layer_info(ws: Workspace, record: RefRecord) -> LayerInfo:
     }
     if isinstance(data, xr.Dataset):
         crs = data.rio.crs
-        bounds = extent(data.rio.bounds(), crs).bounds_wgs84 if crs else None
+        bounds = _shown_bounds(extent(data.rio.bounds(), crs).bounds_wgs84) if crs else None
         return LayerInfo(
             **base,
             crs=_crs_name(crs),
@@ -176,9 +185,15 @@ def display(
     chosen = shown.bands or []
     times = pd.DatetimeIndex(ds["time"].values) if "time" in ds.dims else None
     step = _nearest_step(times, shown.time) if times is not None else None
+    stretch = shown.stretch
+    if times is not None and record.source.format != STAC_RASTER.name:
+        # One scale for every date: a seasonal cycle would saturate a scale taken from one date.
+        # A satellite stack keeps its clearest date's, which leaves cloud out of the scale.
+        with _lock:
+            stretch = _stack_stretch(ds, chosen) or stretch
     query = "&".join(
         [f"bands={','.join(chosen)}"]
-        + ([f"lo={shown.stretch[0]}", f"hi={shown.stretch[1]}"] if shown.stretch else [])
+        + ([f"lo={stretch[0]}", f"hi={stretch[1]}"] if stretch else [])
         + ([f"step={step}"] if step is not None else [])
     )
     factor = 1 if _tileable(record, ds) else _factor(ds)
@@ -193,7 +208,7 @@ def display(
         mode="tiles",
         url=f"/api/layers/{data_ref}/tiles/{{z}}/{{x}}/{{y}}.png?{query}",
         bands=chosen,
-        stretch=shown.stretch,
+        stretch=stretch,
         colormap="viridis" if len(chosen) == 1 else None,
         time=shown.time,
         times=[iso(t) for t in times] if times is not None else [],
@@ -307,7 +322,7 @@ def _frame(
         if key in _frames:
             _frames.move_to_end(key)
             return _frames[key]
-        view = _at_step(data_ref, ds, step)
+        view = _for_display(_at_step(data_ref, ds, step), ds.rio.crs)
         factor = _factor(ds)
         if factor > 1:
             view = _decimate(view, factor)
@@ -325,6 +340,36 @@ def _frame(
         while len(_frames) > MAX_FRAMES:
             _frames.popitem(last=False)
     return frame
+
+
+def _stack_stretch(ds: xr.Dataset, bands: list[str]) -> tuple[float, float] | None:
+    """The 2nd and 98th percentiles of the bands over dates spread across the stack."""
+    count = ds.sizes["time"]
+    steps = sorted({int(i) for i in np.linspace(0, count - 1, min(count, STRETCH_STEPS))})
+    sample = ds[bands].isel(time=steps)
+    step = decimation_for(sample, STRETCH_PIXELS)
+    sample = sample.isel(x=slice(None, None, step), y=slice(None, None, step))
+    return stretch_limits([np.asarray(physical(sample[b]).values) for b in bands])
+
+
+def _for_display(view: xr.Dataset, crs: CRS | None) -> xr.Dataset:
+    """A view the tiler draws correctly, without changing the data: longitudes 0 to 360 shifted
+    to -180 to 180, and rows that run south to north turned to run north to south."""
+    if crs is not None and crs.is_geographic and float(view["x"].max()) > 180:
+        view = view.assign_coords(x=((view["x"] + 180) % 360) - 180).sortby("x")
+    if view.sizes["y"] > 1 and bool(view["y"][-1] > view["y"][0]):
+        view = view.isel(y=slice(None, None, -1))
+    return view
+
+
+def _shown_bounds(bounds: Bounds | None) -> Bounds | None:
+    """Longitude/latitude bounds within -180 to 180, as the map shows a 0 to 360 grid."""
+    if bounds is None or bounds[2] <= 180:
+        return bounds
+    west, south, east, north = bounds
+    if west >= 180:
+        return (west - 360, south, east - 360, north)
+    return (-180.0, south, 180.0, north)
 
 
 def _at_step(data_ref: str, ds: xr.Dataset, step: int | None) -> xr.Dataset:
@@ -371,8 +416,11 @@ def _raster_values(record: RefRecord, ds: xr.Dataset, lon: float, lat: float) ->
         raise LociError(f"{record.data_ref} has no CRS, so a point cannot be placed on it.")
     x, y = _to_crs(crs).transform(lon, lat)
     left, bottom, right, top = ds.rio.bounds()
+    if crs.is_geographic and right > 180 and x < 0:
+        x += 360  # the grid runs from 0 to 360
     if not (left <= x <= right and bottom <= y <= top):
         raise LociError("The point is outside this layer.")
+    _within_budget(record, ds)
     at = ds.sel(x=x, y=y, method="nearest")
     bands = []
     for name in at.data_vars:
@@ -395,6 +443,24 @@ def _raster_values(record: RefRecord, ds: xr.Dataset, lon: float, lat: float) ->
         steps=_steps(record, at) if "time" in at.dims else [],
         bands=bands,
     )
+
+
+def _within_budget(record: RefRecord, ds: xr.Dataset) -> None:
+    """Refuse a point's values through time when the data's stored chunks would make that a
+    large read: each time step costs a whole chunk, however small the area loaded from it."""
+    first = next(iter(ds.data_vars.values()), None)
+    stored = first.encoding.get("preferred_chunks") if first is not None else None
+    if first is None or "time" not in first.dims or not stored:
+        return  # stored whole or in strips: a point reads little more than its own values
+    rows, cols = stored.get("y", ds.sizes["y"]), stored.get("x", ds.sizes["x"])
+    needed = ds.sizes["time"] * rows * cols * first.dtype.itemsize * len(ds.data_vars)
+    where = "remote" if is_remote(record.source.uri) else "local"
+    if needed > POINT_BUDGET[where]:
+        raise LociError(
+            f"Reading this point through time would read about {needed / 1024**3:.1f} GB, "
+            f"because {first.name} is stored {rows} by {cols} cells at a time.",
+            hint="Load a shorter period with select=, or a store chunked for time series.",
+        )
 
 
 def _steps(record: RefRecord, at: xr.Dataset) -> list[StepInfo]:

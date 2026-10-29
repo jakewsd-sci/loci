@@ -1,9 +1,10 @@
 """A demo project with exactly known answers, which `loci demo` writes and opens in the app.
 
 Each question hides a trap that makes a careless answer wrong, as in the benchmarks (M6):
-layers in different CRSs, areas measured in degrees, a point table with no stated CRS, and
-slope on a grid in degrees. ANSWERS.md gives the exact answers, and what a trustworthy answer
-deals with on the way, for whoever runs the demo.
+layers in different CRSs, areas measured in degrees, a point table with no stated CRS, slope on
+a grid in degrees, and a warming trend hidden by a seasonal cycle in kelvin. ANSWERS.md gives
+the exact answers, and what a trustworthy answer deals with on the way, for whoever runs the
+demo.
 """
 
 from collections.abc import Callable
@@ -48,6 +49,13 @@ QUESTIONS = [
         f"{syn.SLOPE_STEEP_PERCENT:g}%",
         "The grid is in degrees and the heights in metres: slope needs both in metres.",
     ),
+    Question(
+        "data/temperature.nc holds monthly air temperature over 2001-2020. How fast did the "
+        "area warm, in °C per decade?",
+        f"{syn.CLIMATE_TREND:g} °C per decade, from annual means",
+        "Values are in kelvin, a seasonal cycle of ±8 K swamps single months, and the grid "
+        "states no CRS.",
+    ),
 ]
 # Real data needs the internet; it has no known answer, so it is offered but not scored.
 SATELLITE_QUESTION = (
@@ -61,6 +69,7 @@ FILES: dict[str, Callable[[Path], Path]] = {
     "data/sites.csv": syn.write_sample_sites_csv,
     "data/ndvi.tif": syn.write_ndvi_raster,
     "data/terrain.tif": syn.write_two_slope_dem,
+    "data/temperature.nc": syn.write_climate_netcdf,
 }
 
 

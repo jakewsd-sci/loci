@@ -2,15 +2,24 @@ import { useState } from "react";
 import { Icon } from "../icons";
 import type { LayerDisplay, LayerInfo, MapFocus, PointValues, StepInfo } from "../types";
 
+// Plain digits: 300, not toPrecision's 3.0e+2.
 const fmt = (v: number | null | undefined, digits = 3) =>
-  v == null || Number.isNaN(v) ? "–" : Math.abs(v) >= 1000 ? v.toFixed(0) : v.toPrecision(digits);
+  v == null || Number.isNaN(v) ? "–" : Math.abs(v) >= 1000 ? v.toFixed(0) : String(Number(v.toPrecision(digits)));
 
 const fmtLonLat = (lon: number, lat: number) =>
   `${Math.abs(lon).toFixed(4)}° ${lon >= 0 ? "E" : "W"}, ${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? "N" : "S"}`;
 
 const day = (iso: string) => iso.slice(0, 10);
-const shortDay = (iso: string) =>
-  new Date(`${day(iso)}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+const shortDay = (iso: string, withYear = false) =>
+  new Date(`${day(iso)}T00:00:00Z`).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+    ...(withYear ? { year: "numeric" } : {}),
+  });
+/** Whether dates across these steps fall in more than one year, so labels need the year. */
+const spansYears = (steps: { time: string }[]) =>
+  steps.length > 0 && steps[0].time.slice(0, 4) !== steps[steps.length - 1].time.slice(0, 4);
 
 /** What hides the ground at a step, in words; empty when nothing is known. */
 function sky(step: StepInfo): string {
@@ -68,7 +77,7 @@ export function Inspector({
               <span className="big">{fmt(charted.values[at])}</span>
               <span style={{ color: "var(--muted)" }}>
                 {charted.name}
-                {steps.length > 0 ? ` · ${shortDay(steps[at].time)}` : ""}
+                {steps.length > 0 ? ` · ${shortDay(steps[at].time, spansYears(steps))}` : ""}
               </span>
             </div>
           )}
@@ -184,11 +193,11 @@ function TimeSeries({
         )}
       </svg>
       <div className="axis">
-        <span>{shortDay(steps[0].time)}</span>
-        <span>{shortDay(steps[steps.length - 1].time)}</span>
+        <span>{shortDay(steps[0].time, spansYears(steps))}</span>
+        <span>{shortDay(steps[steps.length - 1].time, spansYears(steps))}</span>
       </div>
       <span className="readout-line">
-        <strong>{fmt(values[shown])}</strong> {shortDay(steps[shown].time)}
+        <strong>{fmt(values[shown])}</strong> {shortDay(steps[shown].time, spansYears(steps))}
         {sky(steps[shown]) ? ` · ${sky(steps[shown])}` : ""}
       </span>
       {hidden && (

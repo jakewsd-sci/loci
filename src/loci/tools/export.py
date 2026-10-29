@@ -23,9 +23,9 @@ def export(
 ) -> ExportResult:
     """Write a data_ref to `path` in `format` (by default, from the suffix).
 
-    Rasters go to GeoTIFF, one time step of a time stack at a time (`step`); vectors to
-    GeoPackage, GeoJSON or CSV. Nothing is reprojected or resampled. A file already at `path`
-    is replaced.
+    Rasters go to GeoTIFF, one time step of a time stack at a time (`step`), or to NetCDF with
+    every step; vectors to GeoPackage, GeoJSON or CSV. Nothing is reprojected or resampled. A
+    file already at `path` is replaced.
     """
     record = ws.record(data_ref)
     target = Path(path).expanduser().resolve()
@@ -41,13 +41,18 @@ def export(
     temporary = target.with_name(f".{target.stem}.exporting{target.suffix}")
     try:
         if isinstance(data, xr.Dataset):
-            notes = write_raster(data, temporary, step=step)
+            notes = write_raster(data, temporary, step=step, fmt=chosen)
         else:
             assert isinstance(data, gpd.GeoDataFrame)
             notes = write_vector(data, temporary, chosen, name=target.stem)
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
+    if record.crs_source == "assumed" and chosen != "csv":  # a CSV states no CRS at all
+        notes.append(
+            "The CRS was assumed when this was loaded, and the file now states it; the "
+            "assumption is in this file's lineage."
+        )
     call = provenance.tool_call("export", {"data_ref": data_ref, "format": chosen, "step": step})
     sidecar = provenance.new_record(
         produced_by="export",
