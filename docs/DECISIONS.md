@@ -1014,3 +1014,43 @@ setup for everything else. OpenAI, Google Gemini and OpenRouter come first, buil
 - Our own client for each provider: more code to keep current. Pydantic AI already maps tools,
   images, usage and errors for each provider.
 - Keys in a project `.env`: they end up in repositories.
+
+## D-049 loci installs with one command on Windows, macOS and Linux (Phase 2, 2026-10-29)
+
+**Context.** The user wants to demo loci on their own data, on Windows, from something they can
+install. loci ran only from a clone, with Node to build the app and several commands. Anthropic
+does not allow apps built on its Agent SDK to sign people in with a Claude subscription; they take
+an API key, or Bedrock, Vertex or Foundry. Once loci runs on other people's computers, a local app
+that runs code needs protecting from web pages that send it requests.
+
+**Choice.**
+- **A wheel with the web app inside.** `npm run build` bundles the app into
+  `src/loci/web/static`, which the package serves, so a release wheel needs no Node. The Release
+  workflow builds it and pins every dependency to the versions CI tested (`constraints.txt`, from
+  uv.lock). It then installs the wheel on Windows, macOS and Linux and uses it as a person would
+  (`scripts/smoke_install.py`). A `v*` tag publishes it as a GitHub release.
+- **One command.** `install.ps1` and `install.sh` install uv if needed, then the latest release
+  with `uv tool install`, which brings Python 3.12 and every package into a folder of their own.
+- **The `loci` command.** `loci open FOLDER` serves the app on a folder (workspace `.loci/`,
+  scripts `analysis/`) and opens a browser. `loci demo` writes a project of synthetic data with
+  exactly known answers and the benchmarks' traps, and offers its questions in the app.
+  `loci doctor` checks the installation.
+- **Keys pasted into the app.** They are saved to `keys.toml` in the user's settings folder
+  (`%APPDATA%\loci` on Windows), readable by the user only, and never sent back to the browser.
+  The user's own `config.toml` beside it is only ever read. Claude counts as set up with an
+  Anthropic key, a gateway the user has set up (`ANTHROPIC_BASE_URL`), or a cloud route. A
+  banner and the model menu say how to set it up.
+- **Only this computer's own pages.** The app refuses requests for any other host name, which
+  stops DNS rebinding, and refuses changes asked by a page from another origin.
+- **Windows.** CI runs on Windows and macOS. Text is read and written as UTF-8 everywhere; a test
+  checks the source for this. Paths sent to the app use `/`.
+
+**Alternatives.**
+- PyPI: the name is taken, and a release on GitHub is enough for now.
+- Commit the built app: large generated files in every diff.
+- A desktop bundle (an installer with its own Python): heavier to build for three systems, for
+  the same result as uv.
+- Sign people in with their Claude subscription: Anthropic does not allow it for SDK apps.
+- Edit `config.toml` in place: it needs a TOML writer that keeps comments, and the user's own
+  file would change under them.
+

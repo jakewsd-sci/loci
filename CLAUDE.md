@@ -24,14 +24,17 @@ uv run python benchmarks/run.py --agent   # benchmark: Claude Code answers (cost
 uv run ruff check          # lint
 uv run ruff format         # format (CI runs `ruff format --check`)
 uv run mypy                # type-check src/ and tests/
-uv run loci-app            # the map interface at http://127.0.0.1:8765 (needs app/dist)
+uv run loci open [folder]  # the map app on a folder (needs the built app); also loci demo, doctor
+uv run loci-app            # the map interface at http://127.0.0.1:8765 (needs the built app)
 cd app && npm install      # the web app's dependencies (Node 22)
-cd app && npm run build    # type-check and bundle into app/dist, which loci-app serves
+cd app && npm run build    # type-check and bundle into src/loci/web/static, which loci serves
 cd app && npm run dev      # Vite dev server with hot reload; proxies /api to loci-app
 ```
 
 Run lint, format, mypy and pytest before every commit, and `npm run build` in `app/` when the app
-changes. CI runs the Python checks on Python 3.12 and 3.13, and builds the app on Node 22.
+changes. CI runs the Python checks on Python 3.12 and 3.13, and on Windows and macOS, and builds
+the app on Node 22. The Release workflow builds the wheel, installs it on all three systems
+(`scripts/smoke_install.py`), and on a `v*` tag publishes it with `install.ps1` and `install.sh`.
 
 ## Using loci from Claude Code
 
@@ -57,6 +60,8 @@ src/loci/        the package
   script.py      helpers for scripts started by `run` (read, physical, save)             [M4]
   server.py      thin MCP wrapper over tools/ (`loci-mcp`)                               [M5]
   hooks.py       Claude Code hook that validates new data_refs (`loci-hook`)             [M5]
+  cli.py         the `loci` command: open, demo, doctor, mcp                             [P2]
+  demo.py        the demo project: synthetic data, questions and exact answers           [P2]
   web/           local HTTP API for the map interface (`loci-app`)                       [P2]
     layers.py    layer list, map tiles (rio-tiler; time stacks from memory), point values
     agent.py     the agent: Claude in Claude Code (Agent SDK), reviews, checks, events
@@ -64,11 +69,14 @@ src/loci/        the package
     providers.py providers, models and keys (environment or ~/.config/loci/config.toml)
     turn.py      what both engines share: instructions, tool names, script edits
     project.py   the project's scripts under analysis/, links from results to them
-    app.py       Starlette routes, server-sent events, serves app/dist
+    app.py       Starlette routes, server-sent events, serves static/ to this computer only
+    static/      the built web app (git-ignored; npm run build), shipped in the wheel
 app/             React + TypeScript web app (Vite): MapLibre map, Monaco editor          [P2]
 tests/           pytest suite; fixtures are generated in code by loci.synthetic
 benchmarks/      five tasks with known answers (tasks.py), Claude Code sessions (agent.py)
                  and the runner (run.py); results/ is git-ignored                        [M6]
+scripts/         release checks: the wheel's contents, and an installed loci in use      [P2]
+install.ps1/.sh  one-command install of the latest release (uv tool install)            [P2]
 .mcp.json        starts the MCP server for Claude Code                                   [M5]
 .claude/         settings.json: the validation hook and its mode                         [M5]
 docs/DECISIONS.md  decision log
@@ -97,8 +105,11 @@ docs/DECISIONS.md  decision log
 - New checks are small functions in `checks/` that take `Layer`s and return a `CheckResult` with a
   stable id. Test each one on a fixture built to pass and one built to fail. `checks/runner.py`
   decides where it applies.
-- Model providers' keys come from the environment or the user's config file, never from the
-  project or the browser. Both agent engines go through the same permission step and events.
+- Model providers' keys come from the environment or the user's settings folder, never from the
+  project, and never go back to the browser. Both agent engines go through the same permission
+  step and events.
+- loci runs on Windows too: read and write text as UTF-8 (a test checks), send paths to the app
+  with `/`, and do not assume POSIX processes or permissions.
 - STAC loads never resample or reproject on their own: mixed resolutions or CRSs are errors until
   `resolution=` or `output_crs=` is given, and whatever was done is recorded as a note.
 - Every new data_ref or file a tool makes gets a provenance record (`loci.provenance`) naming its
