@@ -5,6 +5,7 @@ import { CodePanel, type ScriptRequest } from "./components/CodePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { LineagePanel } from "./components/LineagePanel";
 import { type DrawnLayer, type MapHandle, MapView } from "./components/MapView";
+import { findModel, ModelPicker } from "./components/ModelPicker";
 import { FocusChip, Inspector, Legend, Readout } from "./components/Overlays";
 import { Icon, Logo } from "./icons";
 import type {
@@ -12,9 +13,9 @@ import type {
   LayerDisplay,
   LayerInfo,
   MapFocus,
-  Model,
   PointValues,
   Proposal,
+  ProviderInfo,
   Review,
   ScriptFile,
 } from "./types";
@@ -23,6 +24,7 @@ type Tab = "agent" | "code" | "lineage";
 
 const message = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
 const REVIEW_KEY = "loci.review";
+const MODEL_KEY = "loci.model";
 
 /** The remembered review mode; browser storage can be missing or blocked, so fall back. */
 function storedReview(): Review {
@@ -31,6 +33,21 @@ function storedReview(): Review {
   } catch {
     return "changes";
   }
+}
+
+/** The remembered model, if there is one. */
+function storedModel(): string | null {
+  try {
+    return localStorage.getItem(MODEL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a model can be used now: listed, and its provider set up. */
+function usable(providers: ProviderInfo[], id: string | null): id is string {
+  const found = id ? findModel(providers, id) : null;
+  return found !== null && found.provider.configured;
 }
 
 /** A layer's display at another time step: same bands and stretch, so dates compare. */
@@ -60,8 +77,9 @@ export function App() {
   const [tab, setTab] = useState<Tab>("agent");
   const [layersOpen, setLayersOpen] = useState(true);
   const [basemap, setBasemap] = useState(true);
-  const [models, setModels] = useState<Model[]>([]);
-  const [model, setModel] = useState("opus");
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [model, setModel] = useState<string>(() => storedModel() ?? "");
   const [point, setPoint] = useState<[number, number] | null>(null);
   const [values, setValues] = useState<PointValues | null>(null);
   const [pointError, setPointError] = useState<string | null>(null);
@@ -121,11 +139,28 @@ export function App() {
     }
   }, []);
 
+  const refreshModels = useCallback(() => {
+    api.models().then(
+      (m) => {
+        setProviders(m.providers);
+        setModelsError(null);
+        setModel((current) => (usable(m.providers, current) ? current : m.default));
+      },
+      (e) => setModelsError(e instanceof ApiError && e.hint ? `${e.message} ${e.hint}` : message(e)),
+    );
+  }, []);
+
+  const chooseModel = useCallback((next: string) => {
+    setModel(next);
+    try {
+      localStorage.setItem(MODEL_KEY, next);
+    } catch {
+      // Not remembered this time; the choice still holds for this page.
+    }
+  }, []);
+
   useEffect(() => {
-    api.models().then((m) => {
-      setModels(m.models);
-      setModel(m.default);
-    }, () => undefined);
+    refreshModels();
     fetch("/api/project")
       .then((r) => r.json())
       .then((p) => setProject(p.project), () => undefined);
@@ -142,7 +177,7 @@ export function App() {
         setScriptsVersion((n) => n + 1);
       },
     );
-  }, [refreshLayers]);
+  }, [refreshLayers, refreshModels]);
 
   const chooseReview = useCallback((next: Review) => {
     setReviewMode(next);
@@ -281,6 +316,7 @@ export function App() {
   }, [toast]);
 
   const chosen = selected ? byRef.get(selected) ?? null : null;
+  const chosenModel = findModel(providers, model);
   const inspected = values ? shown[values.data_ref] : undefined;
   const matches = finder.trim()
     ? layers.filter((l) => `${l.name} ${l.data_ref}`.toLowerCase().includes(finder.toLowerCase())).slice(0, 6)
@@ -414,16 +450,19 @@ export function App() {
             </button>
           ))}
           <span className="spacer" />
-          <label htmlFor="model" className="visually-hidden">Model</label>
-          <select id="model" value={model} onChange={(e) => setModel(e.target.value)}>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>{m.label} · {m.note}</option>
-            ))}
-          </select>
+          <ModelPicker
+            providers={providers}
+            value={model}
+            error={modelsError}
+            onOpen={refreshModels}
+            onChange={chooseModel}
+          />
         </div>
         <AgentPanel
           open={tab === "agent"}
           model={model}
+          modelLabel={chosenModel?.model.label ?? model}
+          engine={chosenModel?.provider.engine ?? "claude"}
           layers={layers}
           byRef={byRef}
           selected={chosen}

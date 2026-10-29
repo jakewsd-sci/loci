@@ -83,7 +83,8 @@ failed validation stop Claude until it is dealt with, or to turn the hook off, s
 ## Run the app
 
 The map interface is a local web app over the same workspace: a map to explore every layer, an
-agent to ask (Opus, Sonnet or Haiku), the scripts it runs, and each layer's lineage and checks.
+agent to ask (Claude, or a model from OpenAI, Google Gemini or OpenRouter), the scripts it runs,
+and each layer's lineage and checks.
 Step through the dates of a time stack on one colour scale, click a place to chart its values
 through time (cloudy dates are marked, not hidden), draw a box to ask the agent about an area,
 and show a failed check on the map to see where the problem lies.
@@ -92,7 +93,7 @@ The agent writes each analysis as a script in `analysis/`, where you can read, e
 When it wants to change a script you already have, it waits and shows you the change as a diff
 to accept or reject; set the composer to "Review every run" to approve each run as well. Every
 result links to its script, and to the exact version that made it.
-It needs [Node 22](https://nodejs.org/) once to build, and the `claude` CLI for the agent.
+It needs [Node 22](https://nodejs.org/) once to build, and the `claude` CLI for Claude models.
 
 ```sh
 cd app && npm install && npm run build && cd ..
@@ -102,6 +103,33 @@ uv run loci-app            # then open http://127.0.0.1:8765
 `--workspace` picks another workspace and `--project` the folder whose `analysis/` holds the
 scripts. For work on the app itself, run `npm run dev` in `app/` next to `loci-app`, and open the
 address Vite prints.
+
+### Models
+
+Claude (Opus, Sonnet or Haiku) answers in Claude Code. Models from OpenAI, Google Gemini and
+OpenRouter answer in loci's own agent loop, with the same tools, scripts, reviews and automatic
+checks. Pick one from the model menu once its provider has a key. Give keys as environment
+variables before starting `loci-app` (`OPENAI_API_KEY`, `GEMINI_API_KEY` or `GOOGLE_API_KEY`,
+`OPENROUTER_API_KEY`), or in your own config file, `~/.config/loci/config.toml` (or
+`$LOCI_CONFIG`), which is read again for every message. Keys stay out of the project and the
+browser.
+
+```toml
+[openai]
+api_key = "sk-..."
+
+[openrouter]
+api_key = "sk-or-..."
+models = ["moonshotai/kimi-k3", { id = "qwen/qwen3.8-flash", label = "Qwen 3.8 Flash", note = "Open weights" }]
+
+[claude]
+route = "bedrock"                    # or vertex or foundry; anthropic by default
+env = { AWS_REGION = "us-east-1" }   # whatever else that route needs
+```
+
+A conversation stays with the kind of model that began it. Switching between Claude and another
+provider starts a new conversation, and the app says so before you send. OpenAI, Gemini and
+OpenRouter models can carry on each other's conversations.
 
 ## Benchmark
 

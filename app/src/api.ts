@@ -3,8 +3,8 @@ import type {
   LayerDetail,
   LayerDisplay,
   LayerInfo,
-  Model,
   PointValues,
+  ProviderInfo,
   Review,
   RunResult,
   RunScript,
@@ -56,7 +56,7 @@ export const api = {
     send<{ path: string; content: string }>(`/api/scripts/${path}`, "PUT", { content }),
   run: (path: string, inputs: Record<string, string>) =>
     send<RunResult>("/api/run", "POST", { path, inputs }),
-  models: () => request<{ models: Model[]; default: string }>("/api/models"),
+  models: () => request<{ providers: ProviderInfo[]; default: string }>("/api/models"),
   runScript: (runId: string) => request<RunScript>(`/api/runs/${runId}/script`),
   decide: (id: string, accepted: boolean, note = "") =>
     send<{ id: string; accepted: boolean }>("/api/agent/decide", "POST", { id, accepted, note }),

@@ -965,3 +965,52 @@ settings govern edits.
   the scientist asked not to have.
 - A custom write-script tool on the MCP server: it duplicates Claude Code's well-tested editing
   tools, and the rule is to add loci tools only when a benchmark needs them.
+
+## D-048 Other providers' models run in loci's own loop (Phase 2, 2026-10-29)
+
+**Context.** The user asked to use models from other providers. The agent ran only in Claude
+Code, through the Claude Agent SDK, which runs only Claude models: directly, or through Amazon
+Bedrock, Google Vertex AI or Microsoft Foundry. The user chose to keep that and add a second
+setup for everything else. OpenAI, Google Gemini and OpenRouter come first, built on Pydantic AI.
+
+**Choice.**
+- **Two engines, one contract.** Claude models still run in Claude Code. Other models run in a
+  Pydantic AI loop (`web/loop.py`) with:
+  - the same instructions;
+  - the loci MCP server's tools, through an MCP client, with the server started as a subprocess
+    as Claude Code starts it;
+  - its own Read, Write and Edit for scripts under `analysis/`.
+
+  Every call goes through the same permission step, so reviews, the refusal of `code=` and the
+  validation of new data_refs behave as they do in Claude Code. The app gets the same events.
+  What both engines share is in `web/turn.py`.
+- **Models are named `<provider>:<model>`**, such as `claude:opus` or `openai:gpt-6-astra`. A
+  bare name is an error, not a guess. `/api/models` lists every provider, whether it is set up,
+  and how to set it up.
+- **Keys and choices belong to the user, not the project.** They come from environment variables,
+  read at start, or from `~/.config/loci/config.toml` or `$LOCI_CONFIG`, read for every message.
+  The environment wins. The file can also list each provider's models and choose Claude's route
+  (`anthropic`, `bedrock`, `vertex` or `foundry`), with whatever environment that route needs.
+  Keys never reach the browser.
+- **Conversations.** The loop keeps each conversation's messages in `.loci/chats/<id>.json`. A
+  failed answer is not added. Any of the loop's providers can carry on a loop conversation.
+  Claude Code and the loop cannot carry on each other's, so switching between them starts a new
+  conversation, and the app says so before the next message.
+- **Cost and errors.** Pydantic AI prices an answer with genai-prices where it can; otherwise the
+  app shows tokens. Errors carry their hint separately. A provider's refusal, such as a rejected
+  key or an unknown model, comes back in plain words with what to do.
+
+**Testing.**
+- Scripted models with the MCP server in process.
+- Each provider's own client against a mock of its HTTP API.
+- A real OpenRouter request with a placeholder key, which came back as a clear error.
+- No real answer from OpenAI, Gemini or OpenRouter has been checked yet, for want of keys.
+
+**Alternatives.**
+- One loop for every provider, Claude included: one code path, but Claude would lose Claude
+  Code's tested editing tools, its context management and sign-in with a Claude subscription.
+- A gateway such as LiteLLM behind Claude Code: the SDK does not support it, and tool use would
+  depend on translation between formats.
+- Our own client for each provider: more code to keep current. Pydantic AI already maps tools,
+  images, usage and errors for each provider.
+- Keys in a project `.env`: they end up in repositories.

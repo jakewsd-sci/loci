@@ -201,6 +201,7 @@ def test_agent_options_give_the_loci_tools_and_the_project_scripts(
     server = options.mcp_servers["loci"]
     assert server["env"] == {"LOCI_WORKSPACE": str(ws.root)}  # type: ignore[typeddict-item]
     assert (options.model, options.resume) == ("sonnet", "s-9")
+    assert options.env == {}  # Claude Code reaches Anthropic as it is set up
     assert isinstance(options.system_prompt, str)
     assert str(project.resolve() / "analysis") in options.system_prompt
     assert (project / "analysis").is_dir()
@@ -396,8 +397,43 @@ def test_agent_failures_arrive_as_events(ws: Workspace, project: Path) -> None:
     assert empty.status_code == 400
 
 
-def test_models_list_the_choices_for_the_picker(ws: Workspace, project: Path) -> None:
-    models = _client(ws, project).get("/api/models").json()
+def test_models_list_every_provider_and_whether_it_is_set_up(
+    ws: Workspace, project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret")
+    client = _client(ws, project)
 
-    assert [m["id"] for m in models["models"]] == ["opus", "sonnet", "haiku"]
-    assert models["default"] == "opus"
+    listed = client.get("/api/models").json()
+    (tmp_path / "broken.toml").write_text("[openai\n")
+    monkeypatch.setenv("LOCI_CONFIG", str(tmp_path / "broken.toml"))
+    broken = client.get("/api/models")
+
+    providers = {p["id"]: p for p in listed["providers"]}
+    assert list(providers) == ["claude", "openai", "google", "openrouter"]
+    assert providers["claude"]["configured"] and providers["claude"]["route"] == "Anthropic"
+    assert providers["openrouter"]["configured"] and not providers["openai"]["configured"]
+    assert "OPENAI_API_KEY" in providers["openai"]["setup"]
+    assert [m["id"] for m in providers["claude"]["models"]] == [
+        "claude:opus",
+        "claude:sonnet",
+        "claude:haiku",
+    ]
+    assert listed["default"] == "claude:opus"
+    assert "or-secret" not in json.dumps(listed)  # keys never reach the browser
+    assert broken.status_code == 400 and "Cannot read the loci config" in broken.json()["error"]
+
+
+def test_claude_routes_reach_claude_code_through_its_environment(
+    ws: Workspace, project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('[claude]\nroute = "bedrock"\nenv = { AWS_REGION = "ap-southeast-2" }\n')
+    monkeypatch.setenv("LOCI_CONFIG", str(config))
+    scripted = ScriptedQuery(_conversation("{}"))
+    client = _client(ws, project, Agent(ws, project=project, run_query=scripted))
+
+    events = _sse(client.post("/api/agent", json={"message": "hi", "model": "claude:sonnet"}).text)
+
+    assert events[-1]["type"] == "done" and scripted.options is not None
+    assert scripted.options.model == "sonnet"
+    assert scripted.options.env == {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "ap-southeast-2"}

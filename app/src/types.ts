@@ -164,10 +164,21 @@ export type MapFocus =
   | { kind: "outside"; ref: string; band: string; range: [number, number | null]; label: string }
   | { kind: "footprints"; refs: string[]; status: CheckStatus; label: string };
 
-export interface Model {
-  id: string;
+export interface ModelInfo {
+  id: string; // "<provider>:<model>", such as "claude:opus" or "openai:gpt-6-astra"
   label: string;
   note: string;
+}
+
+/** A model provider as the picker shows it: Claude runs in Claude Code, the others in loci's loop. */
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  engine: "claude" | "loop";
+  configured: boolean;
+  setup: string | null; // how to set it up, when it is not
+  route: string | null; // Claude only: how Claude Code reaches it, such as "Amazon Bedrock"
+  models: ModelInfo[];
 }
 
 export type AgentEvent =
@@ -182,8 +193,9 @@ export type AgentEvent =
       type: "done";
       session_id: string;
       turns: number;
-      cost_usd: number | null;
+      cost_usd: number | null; // null when the provider's prices are not known
       seconds: number;
       is_error: boolean;
+      tokens?: { input: number; output: number }; // loci's own loop reports these
     }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; hint?: string | null };
