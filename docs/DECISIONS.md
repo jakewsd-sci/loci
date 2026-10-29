@@ -829,3 +829,64 @@ modern, minimal design and agreed to the dependencies below.
 - A tile server such as TiTiler: it brings more than an MVP needs. rio-tiler is the library
   inside it.
 - Mapbox GL or Google Maps: they need keys. MapLibre is the open fork.
+
+## D-044 `run` checks its declared inputs against each other (Phase 2, 2026-10-23)
+
+**Context.** In the benchmark baseline (D-041), no agent called `validate` on the layers it
+combined. The hook checks each new data_ref on its own. So the checks that compare inputs (same
+CRS, overlapping extents, aligned grids) never ran, and only the agent's own knowledge caught
+those traps.
+
+**Choice.** When a script declares two or more inputs, `run` runs those comparison checks before
+it executes. The report is `RunResult.input_checks`, a `ValidationReport`, plus one warning when
+it is not a pass. This adds a field to `models.py` and a paragraph to the `run` docstring.
+- The checks read no pixels, so they are cheap even for remote STAC stacks. Each input's own
+  checks are left to the hook.
+- The report is kept in the run's `run.json`, not on the inputs' provenance records. A layer's
+  badge stays about that layer, not about one way of combining it.
+- The run goes ahead whatever the checks find. Often the script itself is where the mismatch is
+  resolved, for example by reprojecting one input explicitly. The report tells the agent and the
+  scientist to say how.
+
+**Alternatives.**
+- Stop the run on a fail: that blocks the scripts that fix the mismatch.
+- Ask the agent to call `validate` first: the baseline shows it does not.
+- Full `validate` on the inputs: it re-reads pixel statistics that the hook already checked.
+
+## D-045 Exploring over time and place on the map (Phase 2, 2026-10-23)
+
+**Context.** The MVP drew STAC stacks as one preview picture, so a scientist could not zoom into
+them or step through their dates. Areas of interest had to be typed as coordinates. Checks were
+badges, with no way to see where on the map a problem lay. The user agreed this milestone should
+make the map work for "how did this place change?".
+
+**Choice.**
+- **Every raster is tiled.** GeoTIFFs are still read by rio-tiler straight from the file. Other
+  rasters (STAC loads, time stacks, files with an assigned CRS) are tiled with rio-tiler's
+  `XarrayReader` from one time step held in memory as physical values. That step is decimated
+  if it is over 16 million pixels per band, and the legend says so. The latest eight steps are
+  cached, so panning reads the data once. The preview-picture mode is gone.
+- **One stretch for every date.** The stretch comes from the step shown first (the least cloudy
+  by default) and stays in the tile URL as the date changes. One colour then means one value on
+  every date. Per-date stretches would make change invisible.
+- **Values through time are flagged, not cleaned.**
+  - Each date at a clicked point carries the scene's cloud cover (item metadata) and, when an
+    `scl` band was loaded, the Sentinel-2 scene class there.
+  - Dates where the class hides the ground are drawn hollow and left out of the line. Their
+    values stay in the chart and its table; nothing is dropped.
+  - Packed values are rounded to their scale's precision, so 0.0001 × 1000 − 0.1 reads 0.
+- **Checks on the map.**
+  - A failed `value_range` check can show only its out-of-range pixels, in red, as a tile
+    overlay (`outside=low,high`).
+  - Checks that compare inputs can outline each input's footprint.
+  - This is display only; nothing is written to the workspace.
+- **Areas and dates are context for the agent.** A box drawn on the map goes to the agent as a
+  WGS 84 bbox with every message. So do today's date and the date shown for the selected layer.
+  No new tool is needed: `stac_search` already takes a bbox.
+
+**Alternatives.**
+- Write each step to a temporary COG and tile it from the file: overviews and less memory, but
+  a second copy of the data and its provenance to explain.
+- Per-date stretches: brighter pictures, but they hide change.
+- Mask cloudy dates out of the chart: tidier, but it is a silent drop.
+- A drawing library (mapbox-gl-draw): polygons and editing, but a dependency for one box.

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import morecantile
 import numpy as np
-import pystac
 import pytest
 import rasterio
 from pyproj import Transformer
@@ -82,43 +81,105 @@ def test_nan_pixels_are_transparent_even_without_a_declared_nodata(
     with rasterio.open(path, "w", **profile, crs=syn.UTM33N, transform=transform) as dst:
         dst.write(values)
     ref = load(ws, str(path)).data_ref
-    shown = client.get(f"/api/layers/{ref}/display").json()
-    west, east = (
-        _lonlat(syn.ORIGIN[0] + 25, syn.ORIGIN[1] - 100),
-        _lonlat(syn.ORIGIN[0] + 175, syn.ORIGIN[1] - 100),
-    )
+    url = client.get(f"/api/layers/{ref}/display").json()["url"]
+    west = _lonlat(syn.ORIGIN[0] + 25, syn.ORIGIN[1] - 100)
+    east = _lonlat(syn.ORIGIN[0] + 175, syn.ORIGIN[1] - 100)
 
-    def alpha(lon: float, lat: float) -> int:
-        tile = TMS.tile(lon, lat, 18)
-        png = client.get(shown["url"].format(z=18, x=tile.x, y=tile.y)).content
-        with MemoryFile(png) as memory, memory.open() as image:
-            row, col = image.index(*_pixel_in_tile(tile, lon, lat))
-            return int(image.read(image.count)[row, col])
-
-    assert alpha(*west) == 0 and alpha(*east) == 255
+    assert _rgba(client, url, *west)[3] == 0 and _rgba(client, url, *east)[3] == 255
 
 
-def _pixel_in_tile(tile: morecantile.Tile, lon: float, lat: float) -> tuple[float, float]:
-    """The point's position in a 256-pixel tile image, as image (x, y) coordinates."""
+def _rgba(client: TestClient, url: str, lon: float, lat: float, z: int = 18) -> tuple[int, ...]:
+    """The colour drawn at a point, from the tile at zoom z that holds it."""
+    tile = TMS.tile(lon, lat, z)
+    response = client.get(url.format(z=z, x=tile.x, y=tile.y))
+    assert response.status_code == 200, response.text
     left, bottom, right, top = TMS.xy_bounds(tile)
     x, y = TMS.xy(lon, lat)
-    return (x - left) / (right - left) * 256, (top - y) / (top - bottom) * 256
+    col = int((x - left) / (right - left) * 256)
+    row = int((top - y) / (top - bottom) * 256)
+    with MemoryFile(response.content) as memory, memory.open() as image:
+        pixels = image.read()
+    return tuple(int(band[row, col]) for band in pixels)
 
 
-def test_stac_stacks_are_one_georeferenced_preview(
-    client: TestClient, ws: Workspace, stac_scenes: list[pystac.Item]
+CLOUD_ROWS = 10  # the top rows of the last scene are cloud
+
+
+@pytest.fixture
+def cloudy_stack(ws: Workspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """red, nir and scl of the three synthetic scenes, the last with cloud along its top."""
+    items = syn.stac_items(tmp_path / "scenes", cloud_rows=[0, 0, CLOUD_ROWS])
+    monkeypatch.setattr("loci.tools.stac_search.search_items", lambda **_: (items, len(items)))
+    search = stac_search(ws, bbox=list(items[0].bbox or []), start="2024-03-01", end="2024-03-31")
+    return load(ws, search.data_ref, bands=["red", "nir", "scl"], resolution=10).data_ref
+
+
+def _stac_point(column: int, row: int) -> tuple[float, float]:
+    x0, y0 = syn.ORIGIN
+    return _lonlat(x0 + (column + 0.5) * syn.STAC_RES, y0 - (row + 0.5) * syn.STAC_RES)
+
+
+def test_time_stacks_are_tiled_one_step_at_a_time(client: TestClient, cloudy_stack: str) -> None:
+    shown = client.get(f"/api/layers/{cloudy_stack}/display?bands=nir").json()
+    cloudy, clear = _stac_point(5, 2), _stac_point(5, 30)
+
+    def at(step: int, point: tuple[float, float]) -> tuple[int, ...]:
+        return _rgba(client, shown["url"].replace(f"step={shown['step']}", f"step={step}"), *point)
+
+    assert shown["mode"] == "tiles" and shown["step"] == syn.STAC_CLEAREST
+    assert [t[:10] for t in shown["times"]] == list(syn.STAC_DATES)
+    # One stretch for every date: the cloud on the last date shows as a different colour.
+    assert at(2, cloudy) != at(syn.STAC_CLEAREST, cloudy)
+    assert at(2, clear) == at(syn.STAC_CLEAREST, clear)
+    assert at(2, cloudy)[3] == 255
+    outside = _lonlat(syn.ORIGIN[0] - 15, syn.ORIGIN[1] - 15)  # just west of the scenes
+    assert at(2, outside)[3] == 0
+    wrong = client.get(shown["url"].format(z=18, x=0, y=0).replace("step=1", "step=7"))
+    assert wrong.status_code == 400 and "step" in wrong.json()["error"]
+
+
+def test_large_rasters_are_decimated_to_fit_and_say_so(
+    client: TestClient, cloudy_stack: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    search = stac_search(
-        ws, bbox=list(stac_scenes[0].bbox or []), start="2024-03-01", end="2024-03-31"
-    )
-    stack = load(ws, search.data_ref, bands=["red", "nir"]).data_ref
+    monkeypatch.setattr("loci.web.layers.MAX_FRAME_PIXELS", syn.STAC_SIZE**2 // 4)
 
-    shown = client.get(f"/api/layers/{stack}/display?bands=nir").json()
-    picture = client.get(shown["url"])
+    shown = client.get(f"/api/layers/{cloudy_stack}/display?bands=nir").json()
 
-    assert shown["mode"] == "image" and shown["note"].startswith("One preview picture")
-    assert len(shown["coordinates"]) == 4 and shown["time"] is not None
-    assert picture.status_code == 200 and picture.content.startswith(b"\x89PNG")
+    assert shown["note"].startswith("Drawn at 1/2 of the data's resolution")
+    assert _rgba(client, shown["url"], *_stac_point(20, 20))[3] == 255
+
+
+def test_values_through_time_say_when_the_ground_was_hidden(
+    client: TestClient, cloudy_stack: str
+) -> None:
+    lon, lat = _stac_point(5, 2)
+
+    values = client.get(f"/api/layers/{cloudy_stack}/point", params={"lon": lon, "lat": lat})
+    steps = values.json()["steps"]
+    red = next(b for b in values.json()["bands"] if b["name"] == "red")
+
+    assert [s["cloud_cover"] for s in steps] == list(syn.STAC_CLOUD)
+    assert [s["obscured"] for s in steps] == [False, False, True]
+    assert steps[2]["scene_class"] == "cloud, high probability"
+    expected = [dn * syn.STAC_SCALE + syn.STAC_OFFSET for dn in (*syn.STAC_RED[:2], syn.CLOUD_DN)]
+    assert red["values"] == pytest.approx(expected, abs=1e-9)
+    assert red["values"][0] == 0  # rounded to the scale's precision, not -7e-09
+
+
+def test_out_of_range_pixels_can_be_drawn_alone(
+    client: TestClient, ws: Workspace, bad_ndvi_tif: Path, ndvi_tif: Path
+) -> None:
+    bad = load(ws, str(bad_ndvi_tif)).data_ref
+    good = load(ws, str(ndvi_tif)).data_ref
+    centre = _ndvi_centre(syn.NDVI_SIZE // 2 + 2, syn.NDVI_SIZE // 2 + 2)
+    elsewhere = _ndvi_centre(5, 5)
+
+    def url(ref: str) -> str:
+        return f"/api/layers/{ref}/tiles/{{z}}/{{x}}/{{y}}.png?bands=ndvi&outside=-1,1"
+
+    assert _rgba(client, url(bad), *centre) == (255, 92, 92, 255)
+    assert _rgba(client, url(bad), *elsewhere)[3] == 0
+    assert _rgba(client, url(good), *centre)[3] == 0
 
 
 def test_values_at_a_point_come_from_the_data(

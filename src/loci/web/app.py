@@ -126,9 +126,20 @@ async def _layer_display(request: Request) -> Response:
 async def _layer_tile(request: Request) -> Response:
     ws, p, q = _ws(request), request.path_params, request.query_params
     bands = _bands(q.get("bands")) or []
-    stretch = (float(q["lo"]), float(q["hi"])) if "lo" in q and "hi" in q else None
+    stretch = (_number(q["lo"]), _number(q["hi"])) if "lo" in q and "hi" in q else None
+    step = int(_number(q["step"])) if "step" in q else None
+    outside = _range(q["outside"]) if "outside" in q else None
     png = await run_in_threadpool(
-        layers.tile, ws, p["ref"], p["z"], p["x"], p["y"], bands=bands, stretch=stretch
+        layers.tile,
+        ws,
+        p["ref"],
+        p["z"],
+        p["x"],
+        p["y"],
+        bands=bands,
+        stretch=stretch,
+        step=step,
+        outside=outside,
     )
     if png is None:
         return EMPTY_TILE
@@ -263,6 +274,21 @@ async def _body(request: Request) -> dict[str, Any]:
 
 def _bands(value: str | None) -> list[str] | None:
     return [b for b in value.split(",") if b] if value else None
+
+
+def _number(value: str) -> float:
+    try:
+        return float(value)
+    except ValueError as e:
+        raise LociError(f"Not a number: {value!r}.") from e
+
+
+def _range(value: str) -> tuple[float, float]:
+    """'low,high' as two numbers; 'inf' and '-inf' stand for an open end."""
+    parts = value.split(",")
+    if len(parts) != 2:
+        raise LociError(f"A range is two numbers, low,high: {value!r}.")
+    return _number(parts[0]), _number(parts[1])
 
 
 async def _not_found(request: Request, exc: Exception) -> Response:

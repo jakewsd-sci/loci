@@ -58,7 +58,7 @@ src/loci/        the package
   server.py      thin MCP wrapper over tools/ (`loci-mcp`)                               [M5]
   hooks.py       Claude Code hook that validates new data_refs (`loci-hook`)             [M5]
   web/           local HTTP API for the map interface (`loci-app`)                       [P2]
-    layers.py    layer list, map tiles (rio-tiler), point values, GeoJSON
+    layers.py    layer list, map tiles (rio-tiler; time stacks from memory), point values
     agent.py     Claude Agent SDK bridge: loci's MCP server, the validation hook, events
     project.py   the project's scripts under analysis/
     app.py       Starlette routes, server-sent events, serves app/dist
@@ -122,4 +122,6 @@ questions, then stop. When something is ambiguous, ask rather than guess.
 Phase 2, the map interface:
 
 - [x] MVP: `loci-app` with map, layers, inspector, agent with model choice, code editor, lineage
-- [ ] Next: chosen with the user from the MVP's known limitations
+- [x] P2.1: time stacks as tiles with a date control, values through time at a point, draw an area
+      to ask about, failed checks shown on the map, `run` checks its inputs together (D-044, D-045)
+- [ ] Next: chosen with the user

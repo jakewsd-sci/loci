@@ -168,7 +168,7 @@ def _choose_step(
             raise LociError(f"time= must be a date, such as 2024-03-14: {e}") from e
         step = int(np.argmin(np.abs((times - target).total_seconds())))
         return step, f"Showing the step nearest {requested}: {iso(times[step])}."
-    clouds = _step_cloud_cover(record, times)
+    clouds = step_cloud_cover(record, times)
     if clouds is not None and clouds.notna().any():
         step = int(clouds.to_numpy().argmin())
         return step, (
@@ -178,7 +178,7 @@ def _choose_step(
     return 0, f"Showing the first of {len(times)} time steps; pass time= for another."
 
 
-def _step_cloud_cover(record: RefRecord, times: pd.DatetimeIndex) -> pd.Series | None:
+def step_cloud_cover(record: RefRecord, times: pd.DatetimeIndex) -> pd.Series | None:
     """Mean item cloud cover per time step of a STAC load, from items within 12 hours of it."""
     if record.source.format != STAC_RASTER.name:
         return None

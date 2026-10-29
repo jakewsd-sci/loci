@@ -2,7 +2,7 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { Bounds, LayerDisplay, LayerInfo } from "../types";
+import type { Bounds, CheckStatus, LayerDisplay, LayerInfo } from "../types";
 
 export interface DrawnLayer {
   info: LayerInfo;
@@ -21,6 +21,11 @@ interface Props {
   basemapVisible: boolean;
   marker: [number, number] | null;
   scaleSlot: HTMLElement | null;
+  outsideTiles: string | null; // tiles of pixels outside a checked range, drawn above the data
+  footprints: { bounds: Bounds; status: CheckStatus }[]; // inputs a check compared
+  area: Bounds | null;
+  drawing: boolean; // dragging draws an area instead of panning
+  onArea: (bounds: Bounds) => void;
   onPick: (lon: number, lat: number) => void;
   onCursor: (lonLat: [number, number] | null) => void;
 }
@@ -29,26 +34,48 @@ interface Props {
 maplibregl.setWorkerUrl(workerUrl);
 
 const ACCENT = "#8ab4ff";
+const STATUS: Record<CheckStatus, string> = { pass: "#5bd49b", warn: "#f2b45a", fail: "#f2766b" };
 // OpenFreeMap: OpenStreetMap vector tiles, free and without an API key.
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/dark";
+const OUTSIDE = "focus-outside";
+const FOOTPRINTS = "focus-footprints";
+const AREA = "area";
+const MIN_DRAG = 6; // pixels: a shorter drag is a click, not an area
 
 interface Managed {
-  key: string;
+  mode: LayerDisplay["mode"];
+  url: string;
   source: string;
   layers: string[];
 }
 
-/** The display URL and corners decide whether a layer's source must be rebuilt. */
-function keyOf(d: DrawnLayer): string {
-  return `${d.display.mode}|${d.display.url}|${JSON.stringify(d.display.coordinates)}`;
+interface Polygons {
+  type: "FeatureCollection";
+  features: {
+    type: "Feature";
+    properties: { status?: CheckStatus };
+    geometry: { type: "Polygon"; coordinates: [number, number][][] };
+  }[];
 }
 
 const absolute = (url: string) => window.location.origin + url;
+
+function boxes(items: { bounds: Bounds; status?: CheckStatus }[]): Polygons {
+  return {
+    type: "FeatureCollection",
+    features: items.map(({ bounds: [w, s, e, n], status }) => ({
+      type: "Feature",
+      properties: { status },
+      geometry: { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] },
+    })),
+  };
+}
 
 function addLayer(map: maplibregl.Map, d: DrawnLayer, index: number, before?: string): Managed {
   const ref = d.info.data_ref;
   const source = `src-${ref}-${index}`;
   const { display } = d;
+  const managed = { mode: display.mode, url: display.url, source };
   if (display.mode === "geojson") {
     map.addSource(source, { type: "geojson", data: absolute(display.url) });
     const polygons: maplibregl.FilterSpecification = [
@@ -66,27 +93,22 @@ function addLayer(map: maplibregl.Map, d: DrawnLayer, index: number, before?: st
       filter: points,
       paint: { "circle-radius": 4.5, "circle-color": ACCENT, "circle-stroke-color": "#0a0b0d", "circle-stroke-width": 1.5 },
     }, before);
-    return { key: keyOf(d), source, layers: [`${source}-fill`, `${source}-line`, `${source}-point`] };
+    return { ...managed, layers: [`${source}-fill`, `${source}-line`, `${source}-point`] };
   }
-  if (display.mode === "tiles") {
-    map.addSource(source, {
-      type: "raster",
-      tiles: [absolute(display.url)],
-      tileSize: 256,
-      bounds: d.info.bounds_wgs84 ?? undefined,
-      maxzoom: 22,
-    });
-  } else {
-    const corners = display.coordinates as [[number, number], [number, number], [number, number], [number, number]];
-    map.addSource(source, { type: "image", url: absolute(display.url), coordinates: corners });
-  }
+  map.addSource(source, {
+    type: "raster",
+    tiles: [absolute(display.url)],
+    tileSize: 256,
+    bounds: d.info.bounds_wgs84 ?? undefined,
+    maxzoom: 22,
+  });
   map.addLayer({
     id: `${source}-raster`,
     type: "raster",
     source,
     paint: { "raster-resampling": "nearest", "raster-fade-duration": 180 },
   }, before);
-  return { key: keyOf(d), source, layers: [`${source}-raster`] };
+  return { ...managed, layers: [`${source}-raster`] };
 }
 
 function setOpacity(map: maplibregl.Map, managed: Managed, opacity: number) {
@@ -104,7 +126,7 @@ function remove(map: maplibregl.Map, managed: Managed) {
 }
 
 export const MapView = forwardRef<MapHandle, Props>(function MapView(
-  { drawn, basemapVisible, marker, scaleSlot, onPick, onCursor },
+  { drawn, basemapVisible, marker, scaleSlot, outsideTiles, footprints, area, drawing, onArea, onPick, onCursor },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -114,8 +136,9 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const basemapLayers = useRef<string[]>([]);
   const labels = useRef<string | undefined>(undefined); // data goes below the first label layer
-  const handlers = useRef({ onPick, onCursor });
-  handlers.current = { onPick, onCursor };
+  const drewAt = useRef(0); // when an area was last finished, so its mouseup is not also a click
+  const handlers = useRef({ onPick, onCursor, onArea });
+  handlers.current = { onPick, onCursor, onArea };
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -136,9 +159,22 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
       const symbols = layers.filter((l) => l.type === "symbol").map((l) => l.id);
       for (const id of symbols) map.moveLayer(id);
       labels.current = symbols[0];
+      const empty = boxes([]);
+      map.addSource(FOOTPRINTS, { type: "geojson", data: empty });
+      map.addLayer({
+        id: `${FOOTPRINTS}-line`,
+        type: "line",
+        source: FOOTPRINTS,
+        paint: { "line-color": ["match", ["get", "status"], "fail", STATUS.fail, STATUS.warn], "line-width": 2 },
+      });
+      map.addSource(AREA, { type: "geojson", data: empty });
+      map.addLayer({ id: `${AREA}-fill`, type: "fill", source: AREA, paint: { "fill-color": ACCENT, "fill-opacity": 0.08 } });
+      map.addLayer({ id: `${AREA}-line`, type: "line", source: AREA, paint: { "line-color": ACCENT, "line-width": 2 } });
       setReady(true);
     });
-    map.on("click", (e) => handlers.current.onPick(e.lngLat.lng, e.lngLat.lat));
+    map.on("click", (e) => {
+      if (Date.now() - drewAt.current > 300) handlers.current.onPick(e.lngLat.lng, e.lngLat.lat);
+    });
     map.on("mousemove", (e) => handlers.current.onCursor([e.lngLat.lng, e.lngLat.lat]));
     map.on("mouseout", () => handlers.current.onCursor(null));
     mapRef.current = map;
@@ -167,15 +203,22 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     }
   }, [ready, basemapVisible]);
 
+  // Data layers, then what a check found above them; only labels and the drawn area are higher.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
     const wanted = new Map(drawn.map((d) => [d.info.data_ref, d]));
     for (const [ref, m] of managed.current) {
       const next = wanted.get(ref);
-      if (!next || keyOf(next) !== m.key) {
+      if (!next || next.display.mode !== m.mode) {
         remove(map, m);
         managed.current.delete(ref);
+      } else if (next.display.url !== m.url) {
+        // Another date or band: swap the tiles in place, so the map does not flash empty.
+        const source = map.getSource(m.source);
+        if (source instanceof maplibregl.RasterTileSource) source.setTiles([absolute(next.display.url)]);
+        if (source instanceof maplibregl.GeoJSONSource) source.setData(absolute(next.display.url));
+        m.url = next.display.url;
       }
     }
     for (const d of drawn) {
@@ -189,7 +232,76 @@ export const MapView = forwardRef<MapHandle, Props>(function MapView(
     for (const d of drawn) {
       for (const id of managed.current.get(d.info.data_ref)?.layers ?? []) map.moveLayer(id, labels.current);
     }
+    if (map.getLayer(`${OUTSIDE}-raster`)) map.moveLayer(`${OUTSIDE}-raster`, labels.current);
+    map.moveLayer(`${FOOTPRINTS}-line`, labels.current);
   }, [ready, drawn]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    if (map.getLayer(`${OUTSIDE}-raster`)) map.removeLayer(`${OUTSIDE}-raster`);
+    if (map.getSource(OUTSIDE)) map.removeSource(OUTSIDE);
+    if (!outsideTiles) return;
+    map.addSource(OUTSIDE, { type: "raster", tiles: [absolute(outsideTiles)], tileSize: 256, maxzoom: 22 });
+    map.addLayer(
+      { id: `${OUTSIDE}-raster`, type: "raster", source: OUTSIDE, paint: { "raster-resampling": "nearest" } },
+      `${FOOTPRINTS}-line`,
+    );
+  }, [ready, outsideTiles]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    (map.getSource(FOOTPRINTS) as maplibregl.GeoJSONSource).setData(boxes(footprints));
+  }, [ready, footprints]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    (map.getSource(AREA) as maplibregl.GeoJSONSource).setData(boxes(area ? [{ bounds: area }] : []));
+  }, [ready, area]);
+
+  // Drawing an area: drag a box; panning is off until it is drawn.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !drawing) return;
+    const canvas = map.getCanvas();
+    map.dragPan.disable();
+    canvas.style.cursor = "crosshair";
+    let start: maplibregl.MapMouseEvent | null = null;
+    const corners = (a: maplibregl.LngLat, b: maplibregl.LngLat): Bounds => [
+      Math.min(a.lng, b.lng),
+      Math.min(a.lat, b.lat),
+      Math.max(a.lng, b.lng),
+      Math.max(a.lat, b.lat),
+    ];
+    const source = map.getSource(AREA) as maplibregl.GeoJSONSource;
+    const down = (e: maplibregl.MapMouseEvent) => {
+      start = e;
+    };
+    const move = (e: maplibregl.MapMouseEvent) => {
+      if (start) source.setData(boxes([{ bounds: corners(start.lngLat, e.lngLat) }]));
+    };
+    const up = (e: maplibregl.MapMouseEvent) => {
+      if (!start) return;
+      const far = Math.hypot(e.point.x - start.point.x, e.point.y - start.point.y) >= MIN_DRAG;
+      if (far) {
+        drewAt.current = Date.now();
+        handlers.current.onArea(corners(start.lngLat, e.lngLat));
+      }
+      start = null;
+    };
+    map.on("mousedown", down);
+    map.on("mousemove", move);
+    map.on("mouseup", up);
+    return () => {
+      map.off("mousedown", down);
+      map.off("mousemove", move);
+      map.off("mouseup", up);
+      map.dragPan.enable();
+      canvas.style.cursor = "";
+    };
+  }, [ready, drawing]);
 
   useEffect(() => {
     const map = mapRef.current;

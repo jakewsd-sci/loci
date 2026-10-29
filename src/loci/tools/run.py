@@ -18,9 +18,16 @@ from typing import Any
 from loci import provenance
 from loci.errors import LociError
 from loci.io import detect_format, read
-from loci.models import ReadOptions, RunOutput, RunResult, RunStatus, SourceInput
+from loci.models import (
+    ReadOptions,
+    RunOutput,
+    RunResult,
+    RunStatus,
+    SourceInput,
+    ValidationReport,
+)
 from loci.script import INPUTS_FILE, OUTPUTS_DIR, PARAMETERS_FILE, RUN_DIR_ENV, WARNINGS_FILE
-from loci.tools.validate import validate
+from loci.tools.validate import check_together, validate
 from loci.workspace import ROOT_ENV, Workspace
 
 DEFAULT_TIMEOUT = 600.0
@@ -52,16 +59,21 @@ def run(
         timeout: Seconds before the script is stopped (at most 3600).
 
     Declare every input and read it through loci.script: files a script opens by itself do not
-    appear in provenance. The script saves outputs with loci.script.save(obj, filename) (or
-    writes into loci.script.output_path(filename)). After a successful run, spatial outputs
-    become data_refs and are validated; every output gets a provenance record naming the
-    script, its hash, the inputs and the parameters.
+    appear in provenance. Two or more inputs are first checked against each other (same CRS,
+    overlapping extents, aligned grids) and the result is input_checks. The run goes ahead
+    whatever they find: reproject, resample or clip explicitly in the script, and say so.
+
+    The script saves outputs with loci.script.save(obj, filename) (or writes into
+    loci.script.output_path(filename)). After a successful run, spatial outputs become data_refs
+    and are validated; every output gets a provenance record naming the script, its hash, the
+    inputs and the parameters.
     """
     source = _source(code, path)
     declared = inputs or {}
     if not 0 < timeout <= MAX_TIMEOUT:
         raise LociError(f"timeout must be between 0 and {MAX_TIMEOUT:g} seconds.")
     records = {name: ws.record(ref) for name, ref in declared.items()}  # unknown refs fail here
+    input_checks = check_together(ws, list(declared.values()))
     try:
         parameter_text = json.dumps(parameters or {})
     except TypeError as e:
@@ -112,7 +124,10 @@ def run(
         stdout=_tail(stdout),
         stderr=_tail(stderr),
         outputs=outputs,
-        warnings=_warnings(status, exit_code, timeout, outputs) + _script_warnings(run_dir),
+        input_checks=input_checks,
+        warnings=_input_warnings(input_checks)
+        + _warnings(status, exit_code, timeout, outputs)
+        + _script_warnings(run_dir),
         notes=_notes(status, outputs),
     )
     (run_dir / "run.json").write_text(
@@ -226,6 +241,14 @@ def _warnings(
     if failed:
         warnings.append(f"Output(s) {failed} failed validation; see their problems.")
     return warnings
+
+
+def _input_warnings(report: ValidationReport | None) -> list[str]:
+    """One warning naming what the inputs disagree on, if anything."""
+    if report is None or report.status == "pass":
+        return []
+    found = " ".join(c.message for c in report.checks if c.status != "pass")
+    return [f"The inputs were checked together: {report.status}. {found} See input_checks."]
 
 
 def _script_warnings(run_dir: Path) -> list[str]:

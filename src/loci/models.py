@@ -323,6 +323,11 @@ class RunOutput(_Model):
 
 
 class RunResult(_Model):
+    """What `run` returns. `input_checks` compares the declared inputs with each other (same
+    CRS, overlapping extents, aligned grids) when there are two or more; the run goes ahead
+    whatever it finds.
+    """
+
     run_id: str
     status: RunStatus
     exit_code: int | None
@@ -331,6 +336,7 @@ class RunResult(_Model):
     stdout: str
     stderr: str
     outputs: list[RunOutput] = Field(default_factory=list)
+    input_checks: ValidationReport | None = None
     warnings: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 

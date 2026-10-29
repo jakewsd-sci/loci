@@ -1,7 +1,8 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { refsIn, streamAgent } from "../api";
 import { Icon } from "../icons";
-import type { AgentEvent, CheckStatus, LayerInfo } from "../types";
+import type { AgentEvent, Bounds, CheckStatus, LayerInfo, MapFocus, ValidationReport } from "../types";
+import { focusFor } from "./Checks";
 import { StatusBadge } from "./LayersPanel";
 
 type Item =
@@ -23,9 +24,14 @@ interface Props {
   open: boolean;
   model: string;
   layers: LayerInfo[];
+  byRef: Map<string, LayerInfo>;
   selected: LayerInfo | null;
+  shownTime: string | null; // the date the map shows for the selected layer
   point: [number, number] | null;
+  area: Bounds | null;
+  onClearArea: () => void;
   onRef: (ref: string) => void;
+  onFocus: (focus: MapFocus) => void;
 }
 
 const SUGGESTIONS = [
@@ -33,6 +39,31 @@ const SUGGESTIONS = [
   "Describe the selected layer and check it",
   "How was the selected layer made?",
 ];
+
+const AREA_SUGGESTIONS = [
+  "Find the clearest Sentinel-2 scenes of the drawn area from the last three months",
+  "How green was the drawn area this year? Give the median NDVI and how far to trust it",
+];
+
+const today = () => new Date().toISOString().slice(0, 10);
+const round = (v: number) => Number(v.toFixed(5));
+
+/** The run's comparison of its inputs, from the tool result's JSON, if it made one. */
+function inputChecks(name: string, result: string): ValidationReport | null {
+  if (name !== "run") return null;
+  try {
+    return (JSON.parse(result) as { input_checks?: ValidationReport }).input_checks ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Width x height of an area in kilometres, roughly, for its chip. */
+function areaSize([w, s, e, n]: Bounds): string {
+  const km = 111.32;
+  const width = (e - w) * km * Math.cos((((s + n) / 2) * Math.PI) / 180);
+  return `${width.toFixed(width < 10 ? 1 : 0)} × ${((n - s) * km).toFixed((n - s) * km < 10 ? 1 : 0)} km`;
+}
 
 const base = (value: unknown) => String(value ?? "").split("/").pop();
 
@@ -79,6 +110,22 @@ export function Rich({ text, onRef }: { text: string; onRef: (ref: string) => vo
     <div className="reply">
       {text.split(/\n{2,}/).map((block, b) => {
         const lines = block.split("\n").filter((l) => l.trim());
+        if (lines.length > 1 && lines.every((l) => /^\s*\|.*\|\s*$/.test(l))) {
+          const cells = (l: string) => l.trim().slice(1, -1).split("|").map((c) => c.trim());
+          const [head, ...rows] = lines.filter((l) => !/^\s*\|[\s:|-]+\|\s*$/.test(l)).map(cells);
+          return (
+            <table key={b} className="reply-table">
+              <thead>
+                <tr>{head.map((c, i) => <th key={i}>{inline(c)}</th>)}</tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}>{r.map((c, j) => <td key={j}>{inline(c)}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+          );
+        }
         if (lines.length && lines.every((l) => /^\s*[-*] /.test(l)))
           return (
             <ul key={b}>
@@ -145,7 +192,19 @@ function mapContext(layers: LayerInfo[]): string {
   return `Layers on the map, newest first: ${listed}${more}.`;
 }
 
-export function AgentPanel({ open, model, layers, selected, point, onRef }: Props) {
+export function AgentPanel({
+  open,
+  model,
+  layers,
+  byRef,
+  selected,
+  shownTime,
+  point,
+  area,
+  onClearArea,
+  onRef,
+  onFocus,
+}: Props) {
   const [items, setItems] = useState<Item[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -161,9 +220,16 @@ export function AgentPanel({ open, model, layers, selected, point, onRef }: Prop
   async function send(text: string) {
     const message = text.trim();
     if (!message || busy) return;
-    const context: string[] = [mapContext(layers)];
-    if (attach && selected) context.push(`Selected on the map: ${selected.name} (${selected.data_ref}).`);
+    const context: string[] = [`Today is ${today()}.`, mapContext(layers)];
+    if (attach && selected) {
+      const when = shownTime ? `, showing ${shownTime.slice(0, 10)}` : "";
+      context.push(`Selected on the map: ${selected.name} (${selected.data_ref}${when}).`);
+    }
     if (attach && point) context.push(`Point clicked on the map: lon ${point[0].toFixed(5)}, lat ${point[1].toFixed(5)}.`);
+    if (area) {
+      const bbox = area.map(round).join(", ");
+      context.push(`Area drawn on the map, as a bbox in lon/lat (WGS 84): [${bbox}].`);
+    }
     setItems((it) => [...it, { kind: "user", text: message }]);
     setDraft("");
     setBusy(true);
@@ -192,7 +258,7 @@ export function AgentPanel({ open, model, layers, selected, point, onRef }: Prop
               makes appears on the map, checked automatically.
             </p>
             <div className="suggestions">
-              {SUGGESTIONS.map((s) => (
+              {(area ? [...AREA_SUGGESTIONS, ...SUGGESTIONS.slice(1)] : SUGGESTIONS).map((s) => (
                 <button key={s} type="button" className="chip" onClick={() => send(s)}>
                   {s}
                 </button>
@@ -218,6 +284,22 @@ export function AgentPanel({ open, model, layers, selected, point, onRef }: Prop
                       <StatusBadge key={c.data_ref} status={c.status} />
                     ))}
                   </div>
+                  {(() => {
+                    const report = item.state === "ok" ? inputChecks(item.name, item.result) : null;
+                    if (!report) return null;
+                    const focus = report.checks.map((c) => focusFor(c, byRef)).find((f) => f !== null);
+                    return (
+                      <div className="inputs-checked">
+                        <span>Inputs checked together</span>
+                        <StatusBadge status={report.status} />
+                        {focus && (
+                          <button type="button" className="ghost show" onClick={() => onFocus(focus)}>
+                            <Icon name="target" size={13} /> Show on map
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {item.state === "ok" && refsIn(item.result).length > 0 && (
                     <div className="refs">
                       {refsIn(item.result)
@@ -263,7 +345,7 @@ export function AgentPanel({ open, model, layers, selected, point, onRef }: Prop
             id="composer"
             rows={2}
             value={draft}
-            placeholder="Ask about this map, or click a place first"
+            placeholder="Ask about this map; click a place or draw an area first"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -282,6 +364,11 @@ export function AgentPanel({ open, model, layers, selected, point, onRef }: Prop
               <span className="context mono">
                 {point[0].toFixed(4)}, {point[1].toFixed(4)}
               </span>
+            )}
+            {area && (
+              <button type="button" className="ghost context" title="Remove the drawn area" onClick={onClearArea}>
+                <Icon name="area" size={12} /> Area {areaSize(area)} <Icon name="close" size={12} />
+              </button>
             )}
             {!attach && (
               <button type="button" className="ghost context" onClick={() => setAttach(true)}>
