@@ -49,6 +49,7 @@ personal choice in `.claude/settings.local.json`. The workspace is `.loci/` in t
 ```
 src/loci/        the package
   io/            readers: files, URLs and STAC items -> xarray Dataset or GeoDataFrame  [M1, M3]
+                 and writers (write.py) for run outputs and exports                      [P2]
   summary/       compact summaries of loaded data                                        [M1]
   checks/        geospatial invariants and the runner behind `validate`                  [M2]
   tools/         tool functions: Workspace + plain args -> pydantic result models        [M1+]
@@ -69,6 +70,7 @@ src/loci/        the package
     providers.py providers, models and keys (environment or ~/.config/loci/config.toml)
     turn.py      what both engines share: instructions, tool names, script edits
     project.py   the project's scripts under analysis/, links from results to them
+    files.py     the project's data files, files dropped on the map (data/), exports/
     app.py       Starlette routes, server-sent events, serves static/ to this computer only
     static/      the built web app (git-ignored; npm run build), shipped in the wheel
 app/             React + TypeScript web app (Vite): MapLibre map, Monaco editor          [P2]

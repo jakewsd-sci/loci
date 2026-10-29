@@ -119,6 +119,12 @@ Step through the dates of a time stack on one colour scale, click a place to cha
 through time (cloudy dates are marked, not hidden), draw a box to ask the agent about an area,
 and show a failed check on the map to see where the problem lies.
 
+Your data come in three ways. The layers panel lists the files loci can read in the folder,
+and a click puts one on the map. Files dropped on the map are saved in `data/` and mapped. The
+agent finds and loads data too. Every layer is checked as it arrives. Export a layer from its
+settings: it is written to `exports/` as it is held, with a record that `lineage` traces back to
+its sources.
+
 The agent writes each analysis as a script in `analysis/`, where you can read, edit and run it.
 When it wants to change a script you already have, it waits and shows you the change as a diff
 to accept or reject; set the composer to "Review every run" to approve each run as well. Every
