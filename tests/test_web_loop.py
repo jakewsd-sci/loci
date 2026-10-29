@@ -6,11 +6,14 @@ same tools, reviews and checks as Claude in Claude Code, and the app the same ev
 """
 
 import asyncio
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import pytest
+from pydantic_ai.exceptions import ModelAuthenticationError, ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -22,10 +25,14 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 from loci import provenance
 from loci.errors import LociError
@@ -313,6 +320,156 @@ def test_unset_providers_and_failing_models_arrive_as_events(ws: Workspace, proj
     assert [e["type"] for e in failed] == ["session", "error"]
     assert failed[1]["message"] == "RuntimeError: quota exceeded"
     assert not (ws.root / "chats").exists()  # a failed answer is not kept
+
+
+def test_a_providers_refusal_arrives_in_plain_words(ws: Workspace, project: Path) -> None:
+    def refused(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError.for_category(
+            ModelAuthenticationError,
+            status_code=401,
+            model_name="gpt-6-astra",
+            body={"message": "Incorrect API key provided", "code": "invalid_api_key"},
+        )
+
+    agent = Agent(
+        ws,
+        project=project,
+        loop_model=lambda choice: FunctionModel(refused),
+        loop_server=build_server,
+        settings=lambda: Settings(env=KEYS),
+    )
+    error = _answer(agent)[-1]
+
+    assert error["message"] == "OpenAI did not accept the API key (401): Incorrect API key provided"
+    assert "[openai]" in error["hint"] and "OPENAI_API_KEY" in error["hint"]
+
+
+def _openai_reply(first: bool, uri: str) -> dict[str, Any]:
+    """An OpenAI Responses API reply: a call to load, then an answer."""
+    output = (
+        {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "load",
+            "arguments": json.dumps({"uri": uri}),
+            "status": "completed",
+        }
+        if first
+        else {
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "Loaded.", "annotations": []}],
+        }
+    )
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "total_tokens": 120,
+        "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens_details": {"reasoning_tokens": 0},
+    }
+    return {
+        "id": "resp_1",
+        "object": "response",
+        "created_at": 0,
+        "status": "completed",
+        "model": "gpt-6-astra",
+        "output": [output],
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": usage,
+    }
+
+
+def _gemini_reply(first: bool, uri: str) -> dict[str, Any]:
+    """A Gemini generateContent reply: a call to load, then an answer."""
+    part = (
+        {"functionCall": {"name": "load", "args": {"uri": uri}}} if first else {"text": "Loaded."}
+    )
+    return {
+        "candidates": [{"content": {"role": "model", "parts": [part]}, "finishReason": "STOP"}],
+        "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 20},
+    }
+
+
+def _openrouter_reply(first: bool, uri: str) -> dict[str, Any]:
+    """An OpenRouter chat completion: a call to load, then an answer."""
+    function = {"name": "load", "arguments": json.dumps({"uri": uri})}
+    call = {"id": "call_1", "type": "function", "function": function}
+    message = (
+        {"role": "assistant", "content": None, "tool_calls": [call]}
+        if first
+        else {"role": "assistant", "content": "Loaded."}
+    )
+    return {
+        "id": "gen-1",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "qwen/qwen3.8-flash",
+        "provider": "Alibaba",  # OpenRouter names the provider that served the request
+        "choices": [
+            {"index": 0, "message": message, "finish_reason": "tool_calls" if first else "stop"}
+        ],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+    }
+
+
+REPLIES = {
+    "openai:gpt-6-astra": _openai_reply,
+    "google:gemini-3.8-flash": _gemini_reply,
+    "openrouter:qwen/qwen3.8-flash": _openrouter_reply,
+}
+
+
+def _client_model(model_id: str, http: httpx2.AsyncClient) -> Model:
+    """The provider's own Pydantic AI model, sending its requests through `http`."""
+    name = model_id.partition(":")[2]
+    if model_id.startswith("openai:"):
+        return OpenAIResponsesModel(name, provider=OpenAIProvider(api_key="k", http_client=http))
+    if model_id.startswith("google:"):
+        return GoogleModel(name, provider=GoogleProvider(api_key="k", http_client=http))
+    return OpenRouterModel(name, provider=OpenRouterProvider(api_key="k", http_client=http))
+
+
+@pytest.mark.parametrize("model_id", list(REPLIES))
+def test_each_providers_own_client_carries_the_loci_tools(
+    model_id: str, ws: Workspace, project: Path, ramp_tif: Path
+) -> None:
+    """The providers' request and reply formats, through Pydantic AI, against a mock of each
+    provider's HTTP API: the closest these tests come to a live call without keys."""
+    sent: list[str] = []
+
+    def reply(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request.content.decode())
+        return httpx2.Response(200, json=REPLIES[model_id](len(sent) == 1, str(ramp_tif)))
+
+    http = httpx2.AsyncClient(transport=httpx2.MockTransport(reply))
+    agent = Agent(
+        ws,
+        project=project,
+        loop_model=lambda choice: _client_model(model_id, http),
+        loop_server=build_server,
+        settings=lambda: Settings(env={**KEYS, "OPENROUTER_API_KEY": "k"}),
+    )
+
+    events = _answer(agent, "Load the ramp", model=model_id)
+
+    assert [e["type"] for e in events] == [
+        "session",
+        "tool",
+        "tool_result",
+        "check",
+        "text",
+        "done",
+    ]
+    tools = ["stac_search", "load", "inspect", "validate", "preview", "run", "lineage"]
+    assert all(f'"{name}"' in sent[0] for name in [*tools, "Read", "Write", "Edit"])
+    assert "the analyst inside loci" in sent[0] and "Data stays on disk" in sent[0]
+    assert "loci validated raster-" in sent[1]  # the check went back to the model with the result
 
 
 def test_each_provider_gets_its_own_client() -> None:

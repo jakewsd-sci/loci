@@ -26,6 +26,13 @@ from mcp_types import ImageContent, TextContent
 from mcp_types import Tool as ServerTool
 from pydantic_ai import Agent as Runner
 from pydantic_ai import BinaryContent, RunContext, Tool, ToolReturn
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelAuthenticationError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelNotFoundError,
+)
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -46,7 +53,7 @@ from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.usage import UsageLimits
 
 from loci.errors import LociError
-from loci.web.providers import Choice
+from loci.web.providers import Choice, setup_hint
 from loci.web.turn import (
     FILE_TOOLS,
     MAX_TURNS,
@@ -177,20 +184,23 @@ async def answer(
             instructions += "\n" + client.instructions
         runner = Runner(model, instructions=instructions, tools=offered, retries=RETRIES)
         limits = UsageLimits(request_limit=MAX_TURNS)
-        async with runner.iter(message, message_history=history, usage_limits=limits) as run:
-            async for node in run:
-                if Runner.is_call_tools_node(node):
-                    events = _events(host, node.model_response)
-                elif Runner.is_model_request_node(node):
-                    events = tools.unreported(node.request)
-                else:
-                    continue
-                for event in events:
-                    await turn.events.put(event)
-            if run.result is None:
-                raise LociError("The model stopped before it answered.")
-            save_history(host.ws, session, run.result.all_messages())
-            usage = run.usage
+        try:
+            async with runner.iter(message, message_history=history, usage_limits=limits) as run:
+                async for node in run:
+                    if Runner.is_call_tools_node(node):
+                        events = _events(host, node.model_response)
+                    elif Runner.is_model_request_node(node):
+                        events = tools.unreported(node.request)
+                    else:
+                        continue
+                    for event in events:
+                        await turn.events.put(event)
+        except ModelAPIError as e:
+            raise _refused(e, choice, setup_hint(choice.provider, host.settings())) from e
+        if run.result is None:
+            raise LociError("The model stopped before it answered.")
+        save_history(host.ws, session, run.result.all_messages())
+        usage = run.usage
     await turn.events.put(
         {
             "type": "done",
@@ -224,6 +234,34 @@ def _chat(ws: Workspace, session: str) -> Path:
     if not is_session(session):
         raise LociError(f"{session!r} is not a conversation of loci's own loop.")
     return ws.root / CHATS_DIR / f"{session}.json"
+
+
+def _refused(e: ModelAPIError, choice: Choice, setup: str) -> LociError:
+    """A provider's error in words the scientist can act on."""
+    label = choice.provider.label
+    said = _said(e.body) or str(e)
+    status = f" ({e.status_code})" if isinstance(e, ModelHTTPError) else ""
+    if isinstance(e, ModelAuthenticationError):
+        return LociError(f"{label} did not accept the API key{status}: {said}", hint=setup)
+    if isinstance(e, ModelNotFoundError):
+        return LociError(
+            f"{label} has no model {choice.model!r}{status}: {said}",
+            hint=f"Choose another model, or list yours under [{choice.provider.id}] models in "
+            "the config file.",
+        )
+    if isinstance(e, ModelConnectionError):
+        return LociError(f"Could not reach {label}: {said}")
+    return LociError(f"{label} could not answer{status}: {said}")
+
+
+def _said(body: object) -> str:
+    """The provider's own message, from an error body of any of the usual shapes."""
+    if isinstance(body, dict):
+        inner = body.get("error")
+        message = (inner if isinstance(inner, dict) else body).get("message")
+        if isinstance(message, str):
+            return message
+    return "" if body is None else str(body)[:300]
 
 
 def _events(host: "Agent", response: ModelResponse) -> list[Event]:

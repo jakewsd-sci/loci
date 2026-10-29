@@ -8,6 +8,7 @@ import type {
   LayerInfo,
   MapFocus,
   Proposal,
+  ProviderInfo,
   Review,
   ValidationReport,
 } from "../types";
@@ -34,12 +35,15 @@ type Item =
       review: ReviewState | null;
     }
   | { kind: "review"; review: ReviewState; path: string } // one no tool call claimed
-  | { kind: "done"; turns: number; cost: number | null; seconds: number }
-  | { kind: "error"; message: string };
+  | { kind: "done"; model: string; turns: number; cost: number | null; tokens: number | null; seconds: number }
+  | { kind: "error"; message: string; hint: string | null }
+  | { kind: "divider"; text: string };
 
 interface Props {
   open: boolean;
-  model: string;
+  model: string; // "<provider>:<model>"
+  modelLabel: string;
+  engine: ProviderInfo["engine"]; // conversations stay with the engine that began them
   layers: LayerInfo[];
   byRef: Map<string, LayerInfo>;
   selected: LayerInfo | null;
@@ -73,6 +77,7 @@ const AREA_SUGGESTIONS = [
 ];
 
 const today = () => new Date().toISOString().slice(0, 10);
+const thousands = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 const round = (v: number) => Number(v.toFixed(5));
 
 /** The run's comparison of its inputs, from the tool result's JSON, if it made one. */
@@ -209,7 +214,8 @@ export function Rich({
   );
 }
 
-function apply(items: Item[], event: AgentEvent): Item[] {
+/** The conversation after one event; `model` names the model answering. */
+function apply(items: Item[], event: AgentEvent, model: string): Item[] {
   switch (event.type) {
     case "text":
       return [...items, { kind: "text", text: event.text }];
@@ -253,10 +259,12 @@ function apply(items: Item[], event: AgentEvent): Item[] {
           : it,
       );
     }
-    case "done":
-      return [...items, { kind: "done", turns: event.turns, cost: event.cost_usd, seconds: event.seconds }];
+    case "done": {
+      const tokens = event.tokens ? event.tokens.input + event.tokens.output : null;
+      return [...items, { kind: "done", model, turns: event.turns, cost: event.cost_usd, tokens, seconds: event.seconds }];
+    }
     case "error":
-      return [...items, { kind: "error", message: event.message }];
+      return [...items, { kind: "error", message: event.message, hint: event.hint ?? null }];
     default:
       return items;
   }
@@ -278,6 +286,8 @@ function mapContext(layers: LayerInfo[]): string {
 export function AgentPanel({
   open,
   model,
+  modelLabel,
+  engine,
   layers,
   byRef,
   selected,
@@ -303,6 +313,7 @@ export function AgentPanel({
   const [busy, setBusy] = useState(false);
   const [attach, setAttach] = useState(true);
   const session = useRef<string | null>(null);
+  const [sessionEngine, setSessionEngine] = useState<ProviderInfo["engine"] | null>(null);
   const abort = useRef<AbortController | null>(null);
   const proposals = useRef(new Map<string, Proposal>());
   const writes = useRef(new Map<string, string>()); // tool call id -> script it writes
@@ -327,14 +338,24 @@ export function AgentPanel({
     }
     if (scripts.length) context.push(`Scripts in analysis/: ${scripts.map((s) => s.replace(/^analysis\//, "")).join(", ")}.`);
     if (openScript) context.push(`Open in the editor: ${openScript}.`);
-    setItems((it) => [...it, { kind: "user", text: message }]);
+    // Claude Code and loci's own loop keep their conversations apart: a switch starts a new one.
+    const fresh = session.current !== null && sessionEngine !== engine;
+    if (fresh) session.current = null;
+    setItems((it) => [
+      ...it,
+      ...(fresh ? [{ kind: "divider" as const, text: `New conversation with ${modelLabel}` }] : []),
+      { kind: "user", text: message },
+    ]);
     setDraft("");
     setBusy(true);
     abort.current = new AbortController();
     try {
       const body = { message: [...context, message].join("\n"), model, session_id: session.current, review };
       for await (const event of streamAgent(body, abort.current.signal)) {
-        if (event.type === "session" || event.type === "done") session.current = event.session_id;
+        if (event.type === "session" || event.type === "done") {
+          session.current = event.session_id;
+          setSessionEngine(engine);
+        }
         if (event.type === "proposal") {
           proposals.current.set(event.id, event);
           onProposal(event);
@@ -345,10 +366,11 @@ export function AgentPanel({
           writes.current.set(event.id, String(event.input.file_path ?? ""));
         if (event.type === "tool_result" && !event.is_error && writes.current.has(event.id))
           onScriptTouched(writes.current.get(event.id)!);
-        setItems((it) => apply(it, event));
+        setItems((it) => apply(it, event, modelLabel));
       }
     } catch (e) {
-      if ((e as Error).name !== "AbortError") setItems((it) => apply(it, { type: "error", message: String(e) }));
+      if ((e as Error).name !== "AbortError")
+        setItems((it) => apply(it, { type: "error", message: String(e) }, modelLabel));
     } finally {
       setBusy(false);
       abort.current = null;
@@ -482,16 +504,36 @@ export function AgentPanel({
             case "done":
               return (
                 <span key={i} className="done-line">
-                  {item.turns} turns · {item.seconds.toFixed(0)} s
-                  {item.cost != null ? ` · $${item.cost.toFixed(2)}` : ""}
+                  {item.model} · {item.turns} {item.turns === 1 ? "turn" : "turns"} · {item.seconds.toFixed(0)} s
+                  {item.cost != null
+                    ? ` · $${item.cost.toFixed(2)}`
+                    : item.tokens != null
+                      ? ` · ${thousands(item.tokens)} tokens`
+                      : ""}
                 </span>
               );
             case "error":
-              return <span key={i} className="error-line">{item.message}</span>;
+              return (
+                <div key={i} className="error-line">
+                  <span>{item.message}</span>
+                  {item.hint && <span className="hint">{item.hint}</span>}
+                </div>
+              );
+            case "divider":
+              return (
+                <div key={i} className="divider-line" role="separator">
+                  <span>{item.text}</span>
+                </div>
+              );
           }
         })}
         <div ref={end} />
       </div>
+      {sessionEngine !== null && sessionEngine !== engine && !busy && (
+        <p className="engine-note">
+          {modelLabel} will start a new conversation: it cannot see the messages above.
+        </p>
+      )}
       <form
         className="composer"
         onSubmit={(e) => {

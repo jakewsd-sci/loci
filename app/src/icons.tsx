@@ -33,6 +33,7 @@ const paths: Record<string, string[]> = {
   check: ["m5 12 5 5 9-10"],
   prev: ["m15 6-6 6 6 6"],
   next: ["m9 6 6 6-6 6"],
+  chevron: ["m6 9 6 6 6-6"],
 };
 
 export function Icon({ name, size = 18 }: { name: keyof typeof paths; size?: number }) {

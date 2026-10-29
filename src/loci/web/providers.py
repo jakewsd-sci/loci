@@ -170,7 +170,7 @@ def providers(settings: Settings) -> list[ProviderInfo]:
                 label=provider.label,
                 engine=provider.engine,
                 configured=configured,
-                setup=None if configured else _setup(provider, settings),
+                setup=None if configured else setup_hint(provider, settings),
                 route=CLAUDE_ROUTES[route][0] if route else None,
                 models=_models(provider, settings),
             )
@@ -192,7 +192,7 @@ def resolve(model_id: str, settings: Settings) -> Choice:
         return Choice(provider, model, env=env, route=route)
     key = api_key(provider, settings)
     if key is None:
-        raise LociError(f"{provider.label} is not set up.", hint=_setup(provider, settings))
+        raise LociError(f"{provider.label} is not set up.", hint=setup_hint(provider, settings))
     return Choice(provider, model, api_key=key)
 
 
@@ -247,6 +247,12 @@ def _section(settings: Settings, name: str) -> Mapping[str, Any]:
     return section
 
 
-def _setup(provider: Provider, settings: Settings) -> str:
+def setup_hint(provider: Provider, settings: Settings) -> str:
+    """How to give a provider its key: the config file is read again on each request, while
+    environment variables are read when loci-app starts."""
     keys = " or ".join(provider.keys)
-    return f"Set {keys}, or add api_key under [{provider.id}] in {settings.path}."
+    path = settings.path
+    if path is not None and path.is_relative_to(Path.home()):
+        path = Path("~") / path.relative_to(Path.home())
+    where = path or "the loci config file"
+    return f"Add api_key under [{provider.id}] in {where}, or set {keys} before starting loci-app."
