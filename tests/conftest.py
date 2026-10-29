@@ -9,9 +9,21 @@ from loci import synthetic
 from loci.checks.core import Layer
 from loci.io import detect_format, read
 from loci.models import ReadOptions
+from loci.web.providers import PROVIDERS
 from loci.workspace import Workspace
 
 MakeLayer = Callable[..., Layer]
+
+
+@pytest.fixture(autouse=True)
+def _no_user_settings(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tests never read the developer's own loci config file or model providers' keys."""
+    monkeypatch.setenv("LOCI_CONFIG", str(tmp_path_factory.getbasetemp() / "no-config.toml"))
+    for provider in PROVIDERS:
+        for key in provider.keys:
+            monkeypatch.delenv(key, raising=False)
 
 
 @pytest.fixture

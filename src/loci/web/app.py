@@ -31,7 +31,9 @@ from loci.tools.lineage import lineage
 from loci.tools.run import run
 from loci.tools.validate import validate
 from loci.web import layers, project
-from loci.web.agent import DEFAULT_MODEL, DEFAULT_REVIEW, MODELS, Agent
+from loci.web.agent import Agent
+from loci.web.providers import DEFAULT_MODEL, providers
+from loci.web.turn import DEFAULT_REVIEW
 from loci.workspace import Workspace
 
 DEFAULT_PORT = 8765
@@ -50,7 +52,8 @@ def create_app(
     """The Starlette app for one workspace.
 
     `project_dir` holds analysis/ (default: the workspace's parent folder), `dist` is the built
-    web app to serve, and `agent` answers chat messages (default: Claude over the loci tools).
+    web app to serve, and `agent` answers chat messages (default: the models set up for this
+    user, over the loci tools).
     """
     routes: list[Route | Mount] = [
         Route("/api/project", _project),
@@ -225,7 +228,14 @@ def workspace_fingerprint(ws: Workspace) -> str:
 
 
 async def _models(request: Request) -> Response:
-    return JSONResponse({"models": MODELS, "default": DEFAULT_MODEL})
+    """The model picker's choices: every provider, whether it is set up, and its models."""
+    agent: Agent = request.app.state.agent
+
+    def listed() -> dict[str, Any]:
+        found = providers(agent.settings())
+        return {"providers": [p.model_dump(mode="json") for p in found], "default": DEFAULT_MODEL}
+
+    return await _json(listed)
 
 
 async def _agent(request: Request) -> Response:

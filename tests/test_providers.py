@@ -47,12 +47,10 @@ def test_models_resolve_to_their_engine_and_key(tmp_path: Path) -> None:
     settings = _settings(tmp_path, GEMINI_API_KEY="g-env")
 
     claude = resolve("claude:sonnet", settings)
-    bare = resolve("haiku", settings)
     gemini = resolve("google:gemini-3.8-flash", settings)
     routed = resolve("openrouter:qwen/qwen3.8-flash", _settings(tmp_path, OPENROUTER_API_KEY="or"))
 
     assert (claude.provider.engine, claude.model, claude.route) == ("claude", "sonnet", "anthropic")
-    assert (bare.provider.id, bare.model) == ("claude", "haiku")  # older clients send a bare name
     assert (gemini.provider.engine, gemini.model, gemini.api_key) == (
         "loop",
         "gemini-3.8-flash",
@@ -66,6 +64,8 @@ def test_unknown_or_unset_providers_are_errors_with_hints(tmp_path: Path) -> Non
 
     with pytest.raises(LociError, match="Unknown model") as unknown:
         resolve("mistral:large", settings)
+    with pytest.raises(LociError, match="Unknown model 'opus'"):
+        resolve("opus", settings)  # a model is always named with its provider
     with pytest.raises(LociError, match="OpenAI is not set up") as unset:
         resolve("openai:gpt-6-astra", settings)
 

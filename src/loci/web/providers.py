@@ -179,8 +179,8 @@ def providers(settings: Settings) -> list[ProviderInfo]:
 
 
 def resolve(model_id: str, settings: Settings) -> Choice:
-    """The provider, model and credentials for "<provider>:<model>"; a bare name means Claude."""
-    provider_id, _, model = model_id.partition(":") if ":" in model_id else ("claude", "", model_id)
+    """The provider, model and credentials for "<provider>:<model>"."""
+    provider_id, _, model = model_id.partition(":")
     provider = BY_ID.get(provider_id)
     if provider is None or not model:
         raise LociError(
