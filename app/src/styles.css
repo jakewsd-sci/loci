@@ -276,6 +276,17 @@ code, pre, .mono { font-family: var(--mono); }
 .model-option svg { color: var(--accent); }
 .model-menu .setup { margin: 0 8px 6px; font-size: 11px; line-height: 1.45; color: var(--muted); word-break: break-word; }
 .model-menu .setup.error { color: var(--fail); padding-top: 6px; }
+.model-group .forget { margin-left: auto; height: 22px; padding: 0 6px; font-size: 11px; color: var(--faint); }
+.key-entry { display: flex; flex-direction: column; gap: 6px; padding: 2px 0 4px; }
+.key-entry .key-row { display: flex; gap: 6px; padding: 0 8px; }
+.key-entry input {
+  flex: 1; min-width: 0; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong);
+  background: var(--panel); color: var(--text); font: 12px var(--mono);
+}
+.key-entry .primary { height: 30px; padding: 0 12px; font-size: 12px; }
+.model-button .unset-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
+.setup-note { color: var(--warn); }
+.link { border: 0; padding: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
 .panel { flex: 1; min-height: 0; display: none; flex-direction: column; }
 .panel.open { display: flex; }
 

@@ -69,7 +69,7 @@ def _answer(result: RunResult) -> tuple[float, Path]:
     if result.status != "ok":
         raise RuntimeError(f"Reference script failed ({result.status}):\n{result.stderr}")
     path = Path(result.run_dir, "outputs", ANSWER_FILE)
-    return float(json.loads(path.read_text())["answer"]), path
+    return float(json.loads(path.read_text(encoding="utf-8"))["answer"]), path
 
 
 def _not_passing(ws: Workspace, refs: list[str]) -> list[str]:

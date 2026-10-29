@@ -44,6 +44,9 @@ interface Props {
   model: string; // "<provider>:<model>"
   modelLabel: string;
   engine: ProviderInfo["engine"]; // conversations stay with the engine that began them
+  setUp: ProviderInfo | null; // the chosen model's provider, when it still needs a key
+  onSetUp: () => void;
+  suggestions: string[]; // the project's own first questions, as a demo offers
   layers: LayerInfo[];
   byRef: Map<string, LayerInfo>;
   selected: LayerInfo | null;
@@ -288,6 +291,9 @@ export function AgentPanel({
   model,
   modelLabel,
   engine,
+  setUp,
+  onSetUp,
+  suggestions,
   layers,
   byRef,
   selected,
@@ -422,7 +428,7 @@ export function AgentPanel({
               map, checked automatically.
             </p>
             <div className="suggestions">
-              {(area ? [...AREA_SUGGESTIONS, ...SUGGESTIONS.slice(1)] : SUGGESTIONS).map((s) => (
+              {(suggestions.length ? suggestions : area ? [...AREA_SUGGESTIONS, ...SUGGESTIONS.slice(1)] : SUGGESTIONS).map((s) => (
                 <button key={s} type="button" className="chip" onClick={() => send(s)}>
                   {s}
                 </button>
@@ -529,6 +535,15 @@ export function AgentPanel({
         })}
         <div ref={end} />
       </div>
+      {setUp && (
+        <p className="engine-note setup-note">
+          {setUp.label} is not set up yet.{" "}
+          <button type="button" className="link" onClick={onSetUp}>
+            Add {setUp.vendor[0] && "AEIOU".includes(setUp.vendor[0]) ? "an" : "a"} {setUp.vendor} API key
+          </button>{" "}
+          to ask the agent; the map works without one.
+        </p>
+      )}
       {sessionEngine !== null && sessionEngine !== engine && !busy && (
         <p className="engine-note">
           {modelLabel} will start a new conversation: it cannot see the messages above.

@@ -106,13 +106,13 @@ def search_items(
 def save_items(items: Sequence[pystac.Item], path: Path, search: dict[str, Any]) -> None:
     collection = pystac.ItemCollection(items).to_dict()
     collection[SEARCH_KEY] = search
-    path.write_text(json.dumps(collection))
+    path.write_text(json.dumps(collection), encoding="utf-8")
 
 
 def read_items(uri: str) -> tuple[list[pystac.Item], dict[str, Any]]:
     """Items from a saved FeatureCollection, and the search that produced them."""
     try:
-        data = json.loads(Path(uri).read_text())
+        data = json.loads(Path(uri).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         raise LoadError(f"Cannot read STAC items from {uri!r}: {e}") from e
     items = [pystac.Item.from_dict(f) for f in data.get("features", [])]

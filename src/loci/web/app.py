@@ -1,10 +1,12 @@
-"""`loci-app`: the map interface and its API, served locally (D-043).
+"""`loci-app`: the map interface and its API, served locally (D-043). `loci open` starts it too.
 
     uv run loci-app                      # http://127.0.0.1:8765, workspace from Workspace.from_env
     uv run loci-app --workspace path/.loci --port 9000
 
-The API is JSON under /api; the built web app (app/dist) is served at /. Requests run the
-blocking work in a thread so map tiles keep flowing while a script runs.
+The API is JSON under /api; the built web app (static/, from npm run build) is served at /.
+Requests run the blocking work in a thread so map tiles keep flowing while a script runs. Only
+this computer's own pages may use it (D-049): a request for another host name is refused, and so
+is any change asked by a page from another origin.
 """
 
 import argparse
@@ -20,24 +22,29 @@ import uvicorn
 from pydantic import BaseModel
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 
-from loci import provenance
+from loci import demo, provenance
 from loci.errors import LociError, UnknownRefError
 from loci.tools.lineage import lineage
 from loci.tools.run import run
 from loci.tools.validate import validate
 from loci.web import layers, project
 from loci.web.agent import Agent
-from loci.web.providers import DEFAULT_MODEL, providers
+from loci.web.providers import BY_ID, DEFAULT_MODEL, forget_key, providers, save_key
 from loci.web.turn import DEFAULT_REVIEW
 from loci.workspace import Workspace
 
 DEFAULT_PORT = 8765
 DIST_ENV = "LOCI_APP_DIST"
+STATIC = Path(__file__).parent / "static"  # the built web app (npm run build in app/)
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 EMPTY_TILE = Response(status_code=204)
 EVENT_INTERVAL = 1.0  # seconds between checks for workspace changes
 
@@ -48,17 +55,19 @@ def create_app(
     project_dir: Path | None = None,
     dist: Path | None = None,
     agent: Agent | None = None,
+    hosts: tuple[str, ...] = LOCAL_HOSTS,
 ) -> Starlette:
     """The Starlette app for one workspace.
 
     `project_dir` holds analysis/ (default: the workspace's parent folder), `dist` is the built
-    web app to serve, and `agent` answers chat messages (default: the models set up for this
-    user, over the loci tools).
+    web app to serve, `agent` answers chat messages (default: the models set up for this user,
+    over the loci tools), and `hosts` are the host names it answers to.
     """
     routes: list[Route | Mount] = [
         Route("/api/project", _project),
         Route("/api/events", _events),
         Route("/api/models", _models),
+        Route("/api/providers/{provider}/key", _provider_key, methods=["PUT", "DELETE"]),
         Route("/api/agent", _agent, methods=["POST"]),
         Route("/api/agent/decide", _decide, methods=["POST"]),
         Route("/api/runs/{run_id}/script", _run_script),
@@ -78,12 +87,45 @@ def create_app(
         routes.append(Mount("/", StaticFiles(directory=dist, html=True)))
     app = Starlette(
         routes=routes,
+        middleware=[Middleware(LocalOnly, hosts=hosts)],
         exception_handlers={UnknownRefError: _not_found, LociError: _bad_request},
     )
     app.state.ws = ws
     app.state.project = (project_dir or ws.root.parent).resolve()
     app.state.agent = agent or Agent(ws, project=app.state.project)
     return app
+
+
+class LocalOnly:
+    """Refuse what a web page elsewhere could ask of this local app: any request for another host
+    name (DNS rebinding), and any change asked by a page from another origin."""
+
+    def __init__(self, app: ASGIApp, hosts: tuple[str, ...]) -> None:
+        self.app = app
+        self.hosts = hosts
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and (problem := self._refused(scope)):
+            await JSONResponse({"error": problem}, status_code=403)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+    def _refused(self, scope: Scope) -> str | None:
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+        host = headers.get("host", "")
+        if _hostname(host) not in self.hosts:
+            return f"loci answers only to this computer's own pages, not to {host!r}."
+        origin = headers.get("origin")
+        if scope["method"] not in SAFE_METHODS and origin not in (None, f"http://{host}"):
+            return "loci takes changes only from its own pages."
+        return None
+
+
+def _hostname(host: str) -> str:
+    """A Host header without its port: "127.0.0.1:8765" -> "127.0.0.1", "[::1]:80" -> "::1"."""
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
 
 
 def _ws(request: Request) -> Workspace:
@@ -187,6 +229,7 @@ async def _project(request: Request) -> Response:
             "project": str(request.app.state.project),
             "workspace": str(_ws(request).root),
             "scripts": project.SCRIPTS_DIR,
+            "suggestions": demo.suggestions(request.app.state.project),
         }
     )
 
@@ -236,6 +279,23 @@ async def _models(request: Request) -> Response:
         return {"providers": [p.model_dump(mode="json") for p in found], "default": DEFAULT_MODEL}
 
     return await _json(listed)
+
+
+async def _provider_key(request: Request) -> Response:
+    """Save or forget a provider's API key; the reply lists the providers, never a key."""
+    agent: Agent = request.app.state.agent
+    name = request.path_params["provider"]
+    provider = BY_ID.get(name)
+    if provider is None:
+        raise LociError(f"No provider {name!r}.", hint=f"Providers: {', '.join(BY_ID)}.")
+    if request.method == "PUT":
+        key = (await _body(request)).get("api_key")
+        if not isinstance(key, str):
+            raise LociError("Send the key as api_key.")
+        await run_in_threadpool(lambda: save_key(provider, key, agent.settings()))
+    else:
+        await run_in_threadpool(lambda: forget_key(provider, agent.settings()))
+    return await _models(request)
 
 
 async def _agent(request: Request) -> Response:
@@ -344,10 +404,10 @@ def _error(exc: Exception, status: int) -> Response:
 
 
 def default_dist() -> Path:
-    """The built web app: $LOCI_APP_DIST, or app/dist in the repository."""
+    """The built web app: $LOCI_APP_DIST, or the copy in this package."""
     if value := os.environ.get(DIST_ENV):
         return Path(value)
-    return Path(__file__).resolve().parents[3] / "app" / "dist"
+    return STATIC
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -358,7 +418,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args(argv)
     ws = Workspace(args.workspace) if args.workspace else Workspace.from_env()
-    app = create_app(ws, project_dir=args.project, dist=default_dist())
+    # On a wildcard address loci still answers only to this computer's own names (LocalOnly).
+    wildcard = args.host in (*LOCAL_HOSTS, "0.0.0.0", "::")
+    hosts = LOCAL_HOSTS if wildcard else (args.host, *LOCAL_HOSTS)
+    app = create_app(ws, project_dir=args.project, dist=default_dist(), hosts=hosts)
     print(f"loci: workspace {ws.root}; open http://{args.host}:{args.port}", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

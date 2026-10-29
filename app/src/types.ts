@@ -178,7 +178,15 @@ export interface ProviderInfo {
   configured: boolean;
   setup: string | null; // how to set it up, when it is not
   route: string | null; // Claude only: how Claude Code reaches it, such as "Amazon Bedrock"
+  vendor: string; // whose API key it takes, e.g. "Anthropic"
+  keys_url: string; // where to get a key
+  key_source: "environment" | "app" | "config" | null; // the key itself never reaches the app
   models: ModelInfo[];
+}
+
+export interface ModelList {
+  providers: ProviderInfo[];
+  default: string;
 }
 
 export type AgentEvent =

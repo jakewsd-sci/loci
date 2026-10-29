@@ -16,6 +16,9 @@ htmlcov/
 # loci workspace: data_ref records, derived outputs, previews, run directories
 .loci/
 
+# The built web app (npm run build in app/): served by loci-app and shipped in release wheels
+src/loci/web/static/
+
 # OS and editors
 .DS_Store
 .idea/

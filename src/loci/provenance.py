@@ -118,15 +118,17 @@ def write(ws: Workspace, record: Provenance) -> None:
     if record.data_ref is not None:
         target = path_for(ws, record.data_ref)
         temporary = target.with_name(f".{target.name}.tmp")
-        temporary.write_text(text)
+        temporary.write_text(text, encoding="utf-8")
         temporary.replace(target)
     if record.path is not None:
-        Path(record.path + SIDECAR_SUFFIX).write_text(text)
+        Path(record.path + SIDECAR_SUFFIX).write_text(text, encoding="utf-8")
 
 
 def read(ws: Workspace, data_ref: str) -> Provenance | None:
     path = path_for(ws, data_ref)
-    return Provenance.model_validate_json(path.read_text()) if path.exists() else None
+    return (
+        Provenance.model_validate_json(path.read_text(encoding="utf-8")) if path.exists() else None
+    )
 
 
 def record_validation(ws: Workspace, report: ValidationReport) -> None:

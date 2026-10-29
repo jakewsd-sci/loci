@@ -115,7 +115,7 @@ class Workspace:
         path = self._path(data_ref)
         if not path.exists():
             raise UnknownRefError(f"No data_ref {data_ref!r} in this workspace.", hint=self._hint())
-        return RefRecord.model_validate_json(path.read_text())
+        return RefRecord.model_validate_json(path.read_text(encoding="utf-8"))
 
     def open(self, data_ref: str) -> Data:
         """The data behind a data_ref, reopened from its record if this process has not got it."""
@@ -129,7 +129,8 @@ class Workspace:
     def records(self) -> list[RefRecord]:
         """All records, most recent first."""
         records = [
-            RefRecord.model_validate_json(p.read_text()) for p in self.refs_dir.glob("*.json")
+            RefRecord.model_validate_json(p.read_text(encoding="utf-8"))
+            for p in self.refs_dir.glob("*.json")
         ]
         return sorted(records, key=lambda r: r.created_at, reverse=True)
 
@@ -165,7 +166,7 @@ class Workspace:
         final = self._path(record.data_ref)
         temporary = final.with_name(f".{final.name}.tmp")
         # None fields are left out (they read back as None), which keeps records readable.
-        temporary.write_text(record.model_dump_json(indent=2, exclude_none=True))
+        temporary.write_text(record.model_dump_json(indent=2, exclude_none=True), encoding="utf-8")
         os.replace(temporary, final)
 
     def _hint(self, limit: int = 5) -> str:

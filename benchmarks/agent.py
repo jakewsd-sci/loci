@@ -44,7 +44,7 @@ class Session:
 def ask(question: str, workspace: Path, *, mode: str = "report", timeout: float = 1800) -> Session:
     """Run one session on `workspace`; its event stream is kept beside the workspace."""
     settings = workspace.parent / "agent-settings.json"
-    settings.write_text(json.dumps({"env": {"LOCI_VALIDATION_HOOK": mode}}))
+    settings.write_text(json.dumps({"env": {"LOCI_VALIDATION_HOOK": mode}}), encoding="utf-8")
     command = [
         *("claude", "-p", question + INSTRUCTION, "--settings", str(settings)),
         *("--allowedTools", "mcp__loci", "--disallowedTools", NOT_LOCI),
@@ -59,7 +59,7 @@ def ask(question: str, workspace: Path, *, mode: str = "report", timeout: float 
         text=True,
         timeout=timeout,
     )
-    (workspace.parent / "session.jsonl").write_text(result.stdout)
+    (workspace.parent / "session.jsonl").write_text(result.stdout, encoding="utf-8")
     events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
     if not events:
         raise RuntimeError(f"claude gave no output (exit {result.returncode}):\n{result.stderr}")

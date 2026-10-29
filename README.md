@@ -2,14 +2,44 @@
 
 Engine for an agent harness that helps scientists run geospatial workflows they can trust.
 
-Scientists pose questions about places. Agents gather evidence, test it and keep it current. This
-first phase builds only the engine: a Python package exposed as an MCP server and used from Claude
-Code, with verification (`validate`) and provenance (`lineage`) built in from the start. Large data
-stays in a workspace on disk. Tools pass around compact summaries and `data_ref` handles instead.
+Scientists pose questions about places. Agents gather evidence, test it and keep it current.
+loci is a Python package with verification (`validate`) and provenance (`lineage`) built in, used
+from Claude Code as an MCP server or from its own map app, where an agent writes each analysis as
+a script you review. Large data stays in a workspace on disk. Tools pass around compact summaries
+and `data_ref` handles instead.
 
 Status: early development. See the milestone list in [`CLAUDE.md`](CLAUDE.md).
 
-## Quickstart
+## Install
+
+**Windows**, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/jakewsd-sci/loci/main/install.ps1 | iex"
+```
+
+**macOS or Linux**:
+
+```sh
+curl -LsSf https://raw.githubusercontent.com/jakewsd-sci/loci/main/install.sh | sh
+```
+
+The script installs [uv](https://docs.astral.sh/uv/) if needed, and uv installs Python 3.12 and
+loci's packages, at the versions loci was tested with, into a folder of their own. Then, in a new
+terminal:
+
+```sh
+loci demo                       # a demo project with known answers, opened in your browser
+loci open path/to/your/data     # the map app on a folder of your own data
+loci doctor                     # check the installation
+```
+
+The first time, open the model menu (top right) and paste an API key: an
+[Anthropic key](https://platform.claude.com/settings/keys) for Claude, or a key for OpenAI,
+Google Gemini or OpenRouter. It is kept in your own settings on your computer, never in the
+project. `uv tool uninstall loci` removes loci.
+
+## Develop
 
 Requires [uv](https://docs.astral.sh/uv/). uv installs Python 3.12 if it is missing.
 
@@ -80,9 +110,9 @@ failed validation stop Claude until it is dealt with, or to turn the hook off, s
 { "env": { "LOCI_VALIDATION_HOOK": "block" } }
 ```
 
-## Run the app
+## The map app
 
-The map interface is a local web app over the same workspace: a map to explore every layer, an
+`loci open` serves a local web app over a folder's workspace: a map to explore every layer, an
 agent to ask (Claude, or a model from OpenAI, Google Gemini or OpenRouter), the scripts it runs,
 and each layer's lineage and checks.
 Step through the dates of a time stack on one colour scale, click a place to chart its values
@@ -93,26 +123,31 @@ The agent writes each analysis as a script in `analysis/`, where you can read, e
 When it wants to change a script you already have, it waits and shows you the change as a diff
 to accept or reject; set the composer to "Review every run" to approve each run as well. Every
 result links to its script, and to the exact version that made it.
-It needs [Node 22](https://nodejs.org/) once to build, and the `claude` CLI for Claude models.
+From a clone, build the app once with [Node 22](https://nodejs.org/); it is bundled into the
+package, which serves it:
 
 ```sh
 cd app && npm install && npm run build && cd ..
-uv run loci-app            # then open http://127.0.0.1:8765
+uv run loci open             # then open the address it prints
 ```
 
-`--workspace` picks another workspace and `--project` the folder whose `analysis/` holds the
-scripts. For work on the app itself, run `npm run dev` in `app/` next to `loci-app`, and open the
-address Vite prints.
+For work on the app itself, run `npm run dev` in `app/` next to `uv run loci-app`, and open the
+address Vite prints. The app answers only to pages from this computer, and takes changes only
+from its own pages.
 
 ### Models
 
-Claude (Opus, Sonnet or Haiku) answers in Claude Code. Models from OpenAI, Google Gemini and
-OpenRouter answer in loci's own agent loop, with the same tools, scripts, reviews and automatic
-checks. Pick one from the model menu once its provider has a key. Give keys as environment
-variables before starting `loci-app` (`OPENAI_API_KEY`, `GEMINI_API_KEY` or `GOOGLE_API_KEY`,
-`OPENROUTER_API_KEY`), or in your own config file, `~/.config/loci/config.toml` (or
-`$LOCI_CONFIG`), which is read again for every message. Keys stay out of the project and the
-browser.
+Claude (Opus, Sonnet or Haiku) answers in Claude Code, which comes with loci. Models from
+OpenAI, Google Gemini and OpenRouter answer in loci's own agent loop, with the same tools,
+scripts, reviews and automatic checks. Pick one from the model menu once its provider has a key.
+
+Paste a key into the model menu, or set it before starting loci (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`). Claude takes an
+Anthropic API key, as Anthropic asks of apps built on its Agent SDK, or reaches Claude through
+Amazon Bedrock, Google Vertex AI or Microsoft Foundry. Keys pasted into the app go in
+`keys.toml` in your settings folder (`%APPDATA%\loci` on Windows, `~/.config/loci` elsewhere),
+readable by you only. Beside it, your own `config.toml` can hold keys too, list models and pick
+Claude's route; loci reads both files for every message and never writes `config.toml`.
 
 ```toml
 [openai]

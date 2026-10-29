@@ -1,0 +1,131 @@
+name: Release
+
+# Builds the wheel people install, with the web app inside, and installs it on Windows, macOS and
+# Linux as the install scripts do. A tag such as v0.4.0 also publishes it as a GitHub release,
+# then runs the install scripts against that release (D-049).
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    name: wheel with the web app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Build the web app into the package
+        working-directory: app
+        run: npm ci && npm run build
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.5"
+
+      - name: Build the wheel and the versions it was tested with
+        run: |
+          uv build --wheel
+          # Installs pin every dependency to the versions CI tested (uv.lock).
+          uv export --no-dev --no-hashes --no-emit-project --format requirements-txt \
+            --output-file dist/constraints.txt
+
+      - name: Check the wheel holds the web app and the tag's version
+        run: uv run --no-project --python 3.12 scripts/check_wheel.py dist "${GITHUB_REF_NAME}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+
+  install:
+    name: install (${{ matrix.os }})
+    needs: wheel
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.5"
+
+      - name: Install loci as the install scripts do
+        run: |
+          uv tool install --python 3.12 --constraints dist/constraints.txt dist/*.whl
+          uv tool dir --bin >> "$GITHUB_PATH"
+
+      - name: Use it as a person would
+        run: uv run --no-project --python 3.12 scripts/smoke_install.py
+
+  publish:
+    name: publish the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: install
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/constraints.txt install.ps1 install.sh \
+            --title "loci $GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md
+
+  installed:
+    name: install script (${{ matrix.os }})
+    needs: publish
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run install.ps1, as on a Windows computer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy ByPass -File install.ps1
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed" }
+          & "$env:USERPROFILE\.local\bin\loci.exe" doctor
+
+      - name: Run install.sh, as on a Mac or Linux computer
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          sh install.sh
+          "$HOME/.local/bin/loci" doctor

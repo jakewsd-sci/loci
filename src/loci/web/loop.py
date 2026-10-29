@@ -156,7 +156,7 @@ def stdio_server(ws: Workspace) -> StdioServerParameters:
     return StdioServerParameters(
         command=sys.executable,
         args=["-m", "loci.server"],
-        env={**os.environ, ROOT_ENV: str(ws.root)},
+        env={**os.environ, ROOT_ENV: str(ws.root), "PYTHONUTF8": "1"},
     )
 
 
@@ -196,7 +196,7 @@ async def answer(
                     for event in events:
                         await turn.events.put(event)
         except ModelAPIError as e:
-            raise _refused(e, choice, setup_hint(choice.provider, host.settings())) from e
+            raise _refused(e, choice, setup_hint(choice.provider)) from e
         if run.result is None:
             raise LociError("The model stopped before it answered.")
         save_history(host.ws, session, run.result.all_messages())
@@ -388,10 +388,10 @@ def _apply(name: str, file: Path, shown: str, arguments: dict[str, Any]) -> tupl
     if name == "Read":
         if not file.exists():
             return f"{shown} does not exist.", True
-        return file.read_text() or f"{shown} is empty.", False
+        return file.read_text(encoding="utf-8") or f"{shown} is empty.", False
     if name == "Edit" and not file.exists():
         return f"{shown} does not exist; create it with Write.", True
-    before = file.read_text() if file.exists() else ""
+    before = file.read_text(encoding="utf-8") if file.exists() else ""
     after = proposed(name, before, arguments)
     if after is None:
         if name == "Write":
@@ -402,5 +402,5 @@ def _apply(name: str, file: Path, shown: str, arguments: dict[str, Any]) -> tupl
             True,
         )
     file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text(after)
+    file.write_text(after, encoding="utf-8")
     return f"{'Wrote' if name == 'Write' else 'Edited'} {shown}.", False

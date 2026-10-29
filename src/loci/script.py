@@ -59,12 +59,12 @@ def run_dir() -> Path:
 
 def inputs() -> dict[str, str]:
     """Declared inputs: name -> data_ref."""
-    data: dict[str, str] = json.loads((run_dir() / INPUTS_FILE).read_text())
+    data: dict[str, str] = json.loads((run_dir() / INPUTS_FILE).read_text(encoding="utf-8"))
     return data
 
 
 def parameters() -> dict[str, Any]:
-    data: dict[str, Any] = json.loads((run_dir() / PARAMETERS_FILE).read_text())
+    data: dict[str, Any] = json.loads((run_dir() / PARAMETERS_FILE).read_text(encoding="utf-8"))
     return data
 
 
@@ -144,7 +144,7 @@ def save(obj: Any, filename: str) -> Path:
         else:
             obj.to_parquet(path)
     elif isinstance(obj, dict | list) and suffix == ".json":
-        path.write_text(json.dumps(obj, indent=2, default=str))
+        path.write_text(json.dumps(obj, indent=2, default=str), encoding="utf-8")
     else:
         raise TypeError(
             f"Cannot save {type(obj).__name__} as {suffix or 'a file without a suffix'}. "

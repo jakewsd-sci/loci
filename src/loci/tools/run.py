@@ -81,15 +81,15 @@ def run(
 
     run_id, run_dir = _new_run_dir(ws)
     script_path = run_dir / "script.py"
-    script_path.write_text(source)
-    (run_dir / INPUTS_FILE).write_text(json.dumps(declared))
-    (run_dir / PARAMETERS_FILE).write_text(parameter_text)
+    script_path.write_text(source, encoding="utf-8")
+    (run_dir / INPUTS_FILE).write_text(json.dumps(declared), encoding="utf-8")
+    (run_dir / PARAMETERS_FILE).write_text(parameter_text, encoding="utf-8")
     (run_dir / OUTPUTS_DIR).mkdir()
 
     started_at = provenance.now()
     status, exit_code, stdout, stderr, seconds = _execute(ws, run_dir, timeout)
-    (run_dir / "stdout.txt").write_text(stdout)
-    (run_dir / "stderr.txt").write_text(stderr)
+    (run_dir / "stdout.txt").write_text(stdout, encoding="utf-8")
+    (run_dir / "stderr.txt").write_text(stderr, encoding="utf-8")
 
     # A script file is recorded by its absolute path, so lineage finds it from any directory.
     script_file = str(Path(path).expanduser().resolve()) if path is not None else None
@@ -143,7 +143,8 @@ def run(
                 "finished_at": context.created_at,
             },
             indent=2,
-        )
+        ),
+        encoding="utf-8",
     )
     return result
 
@@ -157,7 +158,7 @@ def _source(code: str | None, path: str | None) -> str:
     file = Path(path).expanduser()
     if not file.is_file():
         raise LociError(f"No such script: {path!r}.", hint=f"Paths are resolved from {Path.cwd()}.")
-    return file.read_text()
+    return file.read_text(encoding="utf-8")
 
 
 def _new_run_dir(ws: Workspace) -> tuple[str, Path]:
@@ -179,6 +180,7 @@ def _execute(
         ROOT_ENV: str(ws.root),
         RUN_DIR_ENV: str(run_dir),
         "PYTHONUNBUFFERED": "1",
+        "PYTHONUTF8": "1",  # the script's files and output are UTF-8, whatever the system locale
         "MPLBACKEND": "Agg",
     }
     started = time.monotonic()
@@ -188,7 +190,8 @@ def _execute(
             cwd=run_dir,
             env=env,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )
@@ -256,7 +259,11 @@ def _input_warnings(report: ValidationReport | None) -> list[str]:
 def _script_warnings(run_dir: Path) -> list[str]:
     """Warnings the script recorded through loci.script.warn (e.g. dropped scaling)."""
     path = run_dir / WARNINGS_FILE
-    return [line for line in path.read_text().splitlines() if line] if path.exists() else []
+    return (
+        [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+        if path.exists()
+        else []
+    )
 
 
 def _notes(status: RunStatus, outputs: list[RunOutput]) -> list[str]:

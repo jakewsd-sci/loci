@@ -28,9 +28,11 @@ from starlette.testclient import TestClient
 
 from loci.tools.load import load
 from loci.web.agent import Agent
-from loci.web.app import create_app, workspace_fingerprint
+from loci.web.app import DEFAULT_PORT, create_app, workspace_fingerprint
 from loci.web.project import scripts_fingerprint
 from loci.workspace import Workspace
+
+LOCAL_URL = f"http://127.0.0.1:{DEFAULT_PORT}"  # the app answers to its own names
 
 DOUBLE = "from loci import script\nscript.save(script.read('dem') * 2, 'doubled.tif')\n"
 
@@ -43,7 +45,7 @@ def project(tmp_path: Path) -> Path:
 
 
 def _client(ws: Workspace, project: Path, agent: Agent | None = None) -> TestClient:
-    return TestClient(create_app(ws, project_dir=project, agent=agent))
+    return TestClient(create_app(ws, project_dir=project, agent=agent), base_url=LOCAL_URL)
 
 
 def _sse(text: str) -> list[dict[str, Any]]:
@@ -199,7 +201,7 @@ def test_agent_options_give_the_loci_tools_and_the_project_scripts(
     assert options.strict_mcp_config and options.setting_sources == []
     assert isinstance(options.mcp_servers, dict)
     server = options.mcp_servers["loci"]
-    assert server["env"] == {"LOCI_WORKSPACE": str(ws.root)}  # type: ignore[typeddict-item]
+    assert server["env"] == {"LOCI_WORKSPACE": str(ws.root), "PYTHONUTF8": "1"}  # type: ignore[typeddict-item]
     assert (options.model, options.resume) == ("sonnet", "s-9")
     assert options.env == {}  # Claude Code reaches Anthropic as it is set up
     assert isinstance(options.system_prompt, str)
@@ -437,3 +439,37 @@ def test_claude_routes_reach_claude_code_through_its_environment(
     assert events[-1]["type"] == "done" and scripted.options is not None
     assert scripted.options.model == "sonnet"
     assert scripted.options.env == {"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": "ap-southeast-2"}
+
+
+def test_keys_pasted_in_the_app_are_saved_but_never_sent_back(
+    ws: Workspace, project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCI_CONFIG", str(tmp_path / "settings" / "config.toml"))
+    client = _client(ws, project)
+
+    saved = client.put("/api/providers/openai/key", json={"api_key": "sk-proj-0123456789"})
+    forgotten = client.delete("/api/providers/openai/key")
+    unknown = client.put("/api/providers/mistral/key", json={"api_key": "sk-0123456789"})
+    malformed = client.put("/api/providers/openai/key", json={"api_key": "not a key"})
+
+    assert saved.status_code == 200 and "sk-proj" not in saved.text
+    after = {p["id"]: p for p in saved.json()["providers"]}
+    assert after["openai"]["configured"] and after["openai"]["key_source"] == "app"
+    assert (tmp_path / "settings" / "keys.toml").exists()
+    assert not {p["id"]: p for p in forgotten.json()["providers"]}["openai"]["configured"]
+    assert unknown.status_code == 400 and malformed.status_code == 400
+
+
+def test_a_script_with_windows_line_ends_has_not_changed_since_it_ran(
+    ws: Workspace, project: Path, ramp_tif: Path
+) -> None:
+    script = project / "analysis" / "double.py"
+    script.parent.mkdir()
+    script.write_bytes(DOUBLE.replace("\n", "\r\n").encode())  # as saved on Windows
+    client = _client(ws, project)
+    dem = load(ws, str(ramp_tif)).data_ref
+
+    result = client.post("/api/run", json={"path": "analysis/double.py", "inputs": {"dem": dem}})
+    ref = result.json()["outputs"][0]["data_ref"]
+
+    assert client.get(f"/api/layers/{ref}").json()["script"]["changed"] is False

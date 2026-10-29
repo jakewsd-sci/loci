@@ -3,8 +3,8 @@ import type {
   LayerDetail,
   LayerDisplay,
   LayerInfo,
+  ModelList,
   PointValues,
-  ProviderInfo,
   Review,
   RunResult,
   RunScript,
@@ -56,7 +56,11 @@ export const api = {
     send<{ path: string; content: string }>(`/api/scripts/${path}`, "PUT", { content }),
   run: (path: string, inputs: Record<string, string>) =>
     send<RunResult>("/api/run", "POST", { path, inputs }),
-  models: () => request<{ providers: ProviderInfo[]; default: string }>("/api/models"),
+  models: () => request<ModelList>("/api/models"),
+  saveKey: (provider: string, apiKey: string) =>
+    send<ModelList>(`/api/providers/${provider}/key`, "PUT", { api_key: apiKey }),
+  forgetKey: (provider: string) =>
+    request<ModelList>(`/api/providers/${provider}/key`, { method: "DELETE" }),
   runScript: (runId: string) => request<RunScript>(`/api/runs/${runId}/script`),
   decide: (id: string, accepted: boolean, note = "") =>
     send<{ id: string; accepted: boolean }>("/api/agent/decide", "POST", { id, accepted, note }),

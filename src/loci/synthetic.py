@@ -447,7 +447,8 @@ def write_points_blank_csv(path: Path) -> Path:
         "B,,37.01,2\n"
         "C,15.02,n/a,3\n"
         "D,15.03,37.03,4\n"
-        "E,15.04,37.04,5\n"
+        "E,15.04,37.04,5\n",
+        encoding="utf-8",
     )
     return path
 
