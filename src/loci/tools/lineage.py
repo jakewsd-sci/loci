@@ -13,12 +13,13 @@ MAX_ITEMS_LISTED = 10
 
 
 def lineage(ws: Workspace, target: str) -> LineageResult:
-    """Trace a data_ref, or a file written by run, back to the files, URLs and STAC items it
-    came from.
+    """Trace a data_ref, or a file written by run or exported, back to the files, URLs and STAC
+    items it came from.
 
-    Each step names what produced it (load, stac_search or run), its parent data_refs, what it
-    read from outside the workspace, the number of STAC items it used and its latest validation
-    status. `original_sources` gathers everything read from outside the workspace at any step.
+    Each step names what produced it (load, stac_search, run or export), its parent data_refs,
+    what it read from outside the workspace, the number of STAC items it used and its latest
+    validation status. `original_sources` gathers everything read from outside the workspace at
+    any step.
     """
     warnings: list[str] = []
     notes: list[str] = []
@@ -122,6 +123,9 @@ def _describe(record: Provenance) -> str:
             f"stac_search of {parameters.get('collection')} in {parameters.get('catalog')}: "
             f"{count} items from {parameters.get('start')} to {parameters.get('end')}."
         )
+    if record.produced_by == "export":
+        exported = next((i.data_ref for i in record.inputs if i.data_ref), None)
+        return f"export of {exported} as {parameters.get('format')}{_step_chosen(record)}."
     if record.produced_by == "run":
         names = [i.name or i.data_ref for i in record.inputs]
         code = (record.code_sha256 or "")[:12]
@@ -143,6 +147,11 @@ def _chosen(record: Provenance) -> str:
         return ""
     chosen = [f"{k}={v!r}" for k, v in arguments.items() if k not in {"uri", "kind", "bands"}]
     return f", with {', '.join(chosen)}" if chosen else ""
+
+
+def _step_chosen(record: Provenance) -> str:
+    step = record.parameters.get("step")
+    return f", time step {step}" if step is not None else ""
 
 
 def _offset_left_out(record: Provenance) -> str:

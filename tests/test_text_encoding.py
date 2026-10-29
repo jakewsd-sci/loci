@@ -29,11 +29,21 @@ def _unspecified(file: Path) -> list[int]:
             mode = node.args[1] if len(node.args) > 1 else keywords.get("mode")
             if not (isinstance(mode, ast.Constant) and "b" in str(mode.value)):
                 found.append(node.lineno)
+        elif name == "open" and _text_mode(node.args[0] if node.args else keywords.get("mode")):
+            found.append(node.lineno)  # Path.open; rasterio.open takes a path first, not a mode
         elif name in PROCESS_CALLS:
             text = keywords.get("text")
             if isinstance(text, ast.Constant) and text.value is True:
                 found.append(node.lineno)
     return found
+
+
+def _text_mode(mode: ast.expr | None) -> bool:
+    """Whether a method's first argument is a text mode such as "a" or "w" (Path.open)."""
+    if mode is None:
+        return False
+    value = mode.value if isinstance(mode, ast.Constant) else None
+    return isinstance(value, str) and set(value) <= set("rwax+t") and "b" not in value
 
 
 def test_text_is_read_and_written_as_utf8() -> None:

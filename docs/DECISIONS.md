@@ -1054,3 +1054,36 @@ that runs code needs protecting from web pages that send it requests.
 - Edit `config.toml` in place: it needs a TOML writer that keeps comments, and the user's own
   file would change under them.
 
+## D-050 Data in and out of the app, beside the scientist's own files (Phase 2, 2026-10-29)
+
+**Context.** To demo loci on their own data, the user needs to put files on the map and take
+results away. Before this, data came in only through the agent (`load` by path) or STAC, and
+results stayed in run folders inside the workspace.
+
+**Choice.**
+- **In.** The layers panel lists every file loci can read in the project folder, and a click
+  puts one on the map. Hidden folders, the workspace and `analysis/` are skipped, at most 500
+  files and six folders deep.
+  - Files dropped on the map, or picked with "Add files", are saved in `data/` and put on the map.
+    A shapefile's companion files come with it.
+  - A file already there is replaced only after the app asks, and one dropped again unchanged is
+    left as it was, so its layer still matches it.
+  - Files added in the app are validated at once, as the hook does for the agent's loads.
+- **Out.** A layer is exported as it is held: GeoTIFF for rasters, one time step at a time for a
+  time stack; GeoPackage, GeoJSON or CSV for vectors. Nothing is reprojected or resampled.
+  - Exports go to `exports/` beside the data, never replacing an earlier one, and the app offers
+    them as a download.
+  - Each export gets a provenance sidecar (`produced_by: export`), so `lineage` traces the file
+    back to its sources.
+  - Where a format cannot hold the data as they are, the export says so: GeoJSON in a CRS other
+    than WGS 84, the CRS a CSV cannot record, bands given one data type.
+  - `run` outputs and exports share one GeoTIFF writer (`io/write.py`).
+- `export` is a tool function but not an MCP tool: agents save what they make with
+  `loci.script.save` in a run.
+
+**Alternatives.**
+- Upload into the workspace: the files would be hidden in `.loci/`, away from the scientist.
+- A file browser over the whole disk: more to secure, and a project folder is enough;
+  `loci open` takes any folder.
+- Export as COG or NetCDF now: GeoTIFF serves every GIS; NetCDF comes with gridded data (P2.4c).
+
