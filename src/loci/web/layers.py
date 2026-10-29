@@ -28,7 +28,7 @@ from rio_tiler.utils import render
 
 from loci import provenance
 from loci.errors import LociError
-from loci.io.stac import SCL_CLASSES, SCL_OBSCURED
+from loci.io.stac import SCL_BAND, SCL_CLASSES, SCL_OBSCURED
 from loci.models import Bounds, CheckStatus, ProducedBy, Provenance
 from loci.script import physical
 from loci.summary.common import crs_info, extent, iso
@@ -41,7 +41,6 @@ MAX_FRAME_PIXELS = 16_000_000  # pixels per band of one time step held in memory
 MAX_FRAMES = 8
 MAX_FEATURES = 50_000
 MAX_POINT_FEATURES = 5
-SCL_BAND = "scl"
 HIGHLIGHT = (255, 92, 92)  # pixels outside a checked range
 
 # Workspace objects (open files, dask graphs) are shared; read them one request at a time.

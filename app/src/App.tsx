@@ -1,17 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, watchWorkspace } from "./api";
 import { AgentPanel } from "./components/AgentPanel";
-import { CodePanel } from "./components/CodePanel";
+import { CodePanel, type ScriptRequest } from "./components/CodePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { LineagePanel } from "./components/LineagePanel";
 import { type DrawnLayer, type MapHandle, MapView } from "./components/MapView";
 import { FocusChip, Inspector, Legend, Readout } from "./components/Overlays";
 import { Icon, Logo } from "./icons";
-import type { Bounds, LayerDisplay, LayerInfo, MapFocus, Model, PointValues } from "./types";
+import type {
+  Bounds,
+  LayerDisplay,
+  LayerInfo,
+  MapFocus,
+  Model,
+  PointValues,
+  Proposal,
+  Review,
+  ScriptFile,
+} from "./types";
 
 type Tab = "agent" | "code" | "lineage";
 
 const message = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
+const REVIEW_KEY = "loci.review";
+
+/** The remembered review mode; browser storage can be missing or blocked, so fall back. */
+function storedReview(): Review {
+  try {
+    return localStorage.getItem(REVIEW_KEY) === "runs" ? "runs" : "changes";
+  } catch {
+    return "changes";
+  }
+}
 
 /** A layer's display at another time step: same bands and stretch, so dates compare. */
 function atStep(display: LayerDisplay, step: number | undefined): LayerDisplay {
@@ -50,7 +70,12 @@ export function App() {
   const [cursor, setCursor] = useState<[number, number] | null>(null);
   const [scaleSlot, setScaleSlot] = useState<HTMLDivElement | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [scriptRequest, setScriptRequest] = useState<{ path: string; key: number } | null>(null);
+  const [scriptRequest, setScriptRequest] = useState<ScriptRequest | null>(null);
+  const [scripts, setScripts] = useState<ScriptFile[]>([]);
+  const [scriptsVersion, setScriptsVersion] = useState(0);
+  const [openScript, setOpenScript] = useState<string | null>(null);
+  const [pendingReview, setPendingReview] = useState<Proposal | null>(null);
+  const [reviewMode, setReviewMode] = useState<Review>(storedReview);
   const [finder, setFinder] = useState("");
   const [steps, setSteps] = useState<Record<string, number>>({});
   const [focus, setFocus] = useState<MapFocus | null>(null);
@@ -105,11 +130,37 @@ export function App() {
       .then((r) => r.json())
       .then((p) => setProject(p.project), () => undefined);
     void refreshLayers();
-    return watchWorkspace(() => {
-      void refreshLayers();
-      setVersion((n) => n + 1);
-    });
+    const refreshScripts = () => api.scripts().then(setScripts, () => undefined);
+    void refreshScripts();
+    return watchWorkspace(
+      () => {
+        void refreshLayers();
+        setVersion((n) => n + 1);
+      },
+      () => {
+        void refreshScripts();
+        setScriptsVersion((n) => n + 1);
+      },
+    );
   }, [refreshLayers]);
+
+  const chooseReview = useCallback((next: Review) => {
+    setReviewMode(next);
+    try {
+      localStorage.setItem(REVIEW_KEY, next);
+    } catch {
+      // Not remembered this time; the choice still holds for this page.
+    }
+  }, []);
+
+  const decide = useCallback(async (proposal: Proposal, accepted: boolean, note: string) => {
+    try {
+      await api.decide(proposal.id, accepted, note);
+      setPendingReview((r) => (r?.id === proposal.id ? null : r));
+    } catch (e) {
+      setToast(message(e));
+    }
+  }, []);
 
   // Fetch how to draw each visible layer (again when its bands change).
   useEffect(() => {
@@ -359,6 +410,7 @@ export function App() {
           {(["agent", "code", "lineage"] as Tab[]).map((t) => (
             <button key={t} type="button" role="tab" aria-selected={tab === t} className="ghost" onClick={() => setTab(t)}>
               {t[0].toUpperCase() + t.slice(1)}
+              {t === "code" && pendingReview && <span className="tab-dot" aria-label="waiting for your review" />}
             </button>
           ))}
           <span className="spacer" />
@@ -378,18 +430,40 @@ export function App() {
           shownTime={chosen ? shown[chosen.data_ref]?.time ?? null : null}
           point={point}
           area={area}
+          scripts={scripts.map((s) => s.path)}
+          openScript={openScript}
+          review={reviewMode}
+          onReviewMode={chooseReview}
+          onProposal={setPendingReview}
+          onDecision={(id) => setPendingReview((r) => (r?.id === id ? null : r))}
+          onTurnEnd={() => setPendingReview(null)}
+          onDecide={(proposal, accepted, note) => void decide(proposal, accepted, note)}
+          onShowReview={() => setTab("code")}
+          onScriptTouched={(path) => setScriptRequest({ path, auto: true, key: Date.now() })}
           onClearArea={() => setArea(null)}
           onRef={selectRef}
           onFocus={showFocus}
         />
-        <CodePanel open={tab === "code"} layers={layers} byRef={byRef} request={scriptRequest} onRef={selectRef} onFocus={showFocus} />
+        <CodePanel
+          open={tab === "code"}
+          layers={layers}
+          byRef={byRef}
+          files={scripts}
+          filesVersion={scriptsVersion}
+          request={scriptRequest}
+          review={pendingReview}
+          onOpen={setOpenScript}
+          onDecide={(proposal, accepted, note) => void decide(proposal, accepted, note)}
+          onRef={selectRef}
+          onFocus={showFocus}
+        />
         <LineagePanel
           open={tab === "lineage"}
           selected={selected}
           version={version}
           byRef={byRef}
           onRef={selectRef}
-          onOpenScript={(path) => { setScriptRequest({ path, key: Date.now() }); setTab("code"); }}
+          onOpenScript={(script) => { setScriptRequest({ ...script, key: Date.now() }); setTab("code"); }}
           onFocus={showFocus}
         />
       </aside>

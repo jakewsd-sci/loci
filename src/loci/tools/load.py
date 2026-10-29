@@ -30,7 +30,7 @@ def load(
     bbox: list[float] | None = None,
     output_crs: str | None = None,
     resampling: str | None = None,
-    drop_offset: bool = False,
+    drop_offset: bool | None = None,
 ) -> RefSummary:
     """Read a dataset into the workspace; return its new data_ref and a compact summary.
 
@@ -47,9 +47,11 @@ def load(
         bbox: STAC only. [west, south, east, north] in degrees; defaults to the search area.
         output_crs: STAC only. CRS of the output grid; items in other CRSs are reprojected.
         resampling: STAC only. Method used when resampling or reprojecting (default nearest).
-        drop_offset: STAC only. Leave the items' declared offsets out of physical values, for
-            stored values that already have the offset applied. Recorded and noted; items that
-            do not say so are warned about.
+        drop_offset: STAC only. Whether to leave the items' declared offsets out of physical
+            values. By default loci decides from the items: left out when every item says its
+            stored values already include it (earthsearch:boa_offset_applied), applied when none
+            does, and an error when only some do. True or False decides instead. The decision
+            is recorded and noted.
 
     Rasters are opened lazily: the summary describes the grid and bands, not pixel values.
     Vectors are read in full and summarised completely.
@@ -64,7 +66,7 @@ def load(
         bbox=tuple(bbox) if bbox is not None else None,  # type: ignore[arg-type]
         output_crs=output_crs,
         resampling=resampling,
-        drop_offset=True if drop_offset else None,
+        drop_offset=drop_offset,
     )
     call = provenance.tool_call(
         "load",
@@ -92,6 +94,8 @@ def _load_items(
         )
     if kind not in (None, "raster"):
         raise LoadError("Pixels loaded from STAC items are rasters; omit kind or pass 'raster'.")
+    if options.drop_offset is None:  # not chosen: decide from the items (D-046)
+        options = options.model_copy(update={"drop_offset": "auto"})
     result = read(record.source.uri, STAC_RASTER, options)
     loaded = ws.register(result, record.source.uri)
     items = [item.id for item in read_items(record.source.uri)[0]]

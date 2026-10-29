@@ -96,11 +96,40 @@ export interface LineageResult {
   notes: string[];
 }
 
+export interface ScriptLink {
+  run_id: string;
+  path: string | null; // e.g. analysis/ndvi.py; null when the run's script was given inline
+  changed: boolean; // the file now differs from the version that ran
+}
+
 export interface LayerDetail {
   layer: LayerInfo;
   lineage: LineageResult;
   validation: ValidationReport | null;
+  script: ScriptLink | null;
 }
+
+export interface RunScript {
+  run_id: string;
+  content: string;
+  sha256: string;
+}
+
+/** What the agent is waiting on: a change to a script, or (when every run is reviewed) a run. */
+export type Proposal =
+  | { type: "proposal"; id: string; tool_use_id: string | null; kind: "edit"; path: string; before: string; after: string }
+  | {
+      type: "proposal";
+      id: string;
+      tool_use_id: string | null;
+      kind: "run";
+      path: string;
+      code: string;
+      inputs: Record<string, string>;
+      parameters: unknown;
+    };
+
+export type Review = "changes" | "runs";
 
 export interface ScriptFile {
   path: string;
@@ -147,6 +176,8 @@ export type AgentEvent =
   | { type: "tool"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; id: string; is_error: boolean; text: string }
   | { type: "check"; tool_use_id: string; data_ref: string; status: CheckStatus }
+  | Proposal
+  | { type: "decision"; id: string; accepted: boolean }
   | {
       type: "done";
       session_id: string;

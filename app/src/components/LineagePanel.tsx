@@ -11,15 +11,8 @@ interface Props {
   version: number; // changes when the workspace changes, so the detail is reloaded
   byRef: Map<string, LayerInfo>;
   onRef: (ref: string) => void;
-  onOpenScript: (path: string) => void;
+  onOpenScript: (script: { path?: string; runId?: string }) => void;
   onFocus: (focus: MapFocus) => void;
-}
-
-/** A script under the project's analysis/ folder, as the code panel names it. */
-function analysisPath(path: unknown): string | null {
-  const text = String(path ?? "");
-  const at = text.lastIndexOf("/analysis/");
-  return at >= 0 ? text.slice(at + 1) : null;
 }
 
 export function LineagePanel({ open, selected, version, byRef, onRef, onOpenScript, onFocus }: Props) {
@@ -50,7 +43,7 @@ export function LineagePanel({ open, selected, version, byRef, onRef, onOpenScri
     }
   }
 
-  const script = analysisPath(detail?.lineage.provenance?.call.arguments?.path);
+  const script = detail?.script ?? null;
   return (
     <div className={`panel${open ? " open" : ""}`} role="tabpanel" aria-label="Lineage">
       {!detail ? (
@@ -100,9 +93,27 @@ export function LineagePanel({ open, selected, version, byRef, onRef, onOpenScri
                     </span>
                     <span className="what">{step.description}</span>
                     {i === 0 && script && (
-                      <button type="button" className="secondary" style={{ alignSelf: "flex-start" }} onClick={() => onOpenScript(script)}>
-                        <Icon name="file" size={14} /> Open {script}
-                      </button>
+                      <div className="script-link">
+                        {script.path && (
+                          <button type="button" className="secondary" onClick={() => onOpenScript({ path: script.path! })}>
+                            <Icon name="file" size={14} /> Open {script.path}
+                          </button>
+                        )}
+                        {(script.changed || !script.path) && (
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => onOpenScript({ runId: script.run_id, path: script.path ?? undefined })}
+                          >
+                            <Icon name="code" size={14} /> The script as it ran
+                          </button>
+                        )}
+                        {script.changed && (
+                          <span className="changed">
+                            {script.path} has changed since {script.run_id} made this layer.
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
                 </li>

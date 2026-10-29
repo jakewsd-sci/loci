@@ -41,7 +41,9 @@ class ReadOptions(_Model):
     """How a source was read. Stored with each data_ref so any process can reopen it identically.
 
     layer, x_col, y_col and crs apply to files; bands, resolution, bbox, output_crs, resampling
-    and drop_offset to pixels loaded from STAC items.
+    and drop_offset to pixels loaded from STAC items. drop_offset is True to leave the items'
+    declared offsets out, False or None to apply them, and "auto" to decide from the items when
+    loading; a stored record always holds the decision, never "auto" (D-046).
     """
 
     layer: str | None = None
@@ -53,7 +55,7 @@ class ReadOptions(_Model):
     bbox: Bounds | None = None
     output_crs: str | None = None
     resampling: str | None = None
-    drop_offset: bool | None = None
+    drop_offset: bool | Literal["auto"] | None = None
 
 
 class CRSInfo(_Model):

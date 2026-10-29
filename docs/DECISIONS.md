@@ -890,3 +890,78 @@ make the map work for "how did this place change?".
 - Per-date stretches: brighter pictures, but they hide change.
 - Mask cloudy dates out of the chart: tidier, but it is a silent drop.
 - A drawing library (mapbox-gl-draw): polygons and editing, but a dependency for one box.
+
+## D-046 Offsets already applied are left out by default (Phase 2, 2026-10-29)
+
+**Context.** D-030 left it to the caller to pass `drop_offset=True` for Earth Search scenes whose
+stored values already include the offset they still declare. In use, agents loaded without it.
+- Both agent sessions over Sydney got reflectance about 0.1 too low.
+- The map showed impossible negative red values.
+- Each time, the agent's only response was a warning.
+
+A wrong default that is merely flagged is still a wrong number in front of a scientist.
+
+**Choice.** `load`'s `drop_offset` now defaults to an automatic choice, made from the items'
+metadata, for bands that declare an offset:
+- Left out when every item is marked `earthsearch:boa_offset_applied = true`. A note says so and
+  names `drop_offset=False` as the way back. Lineage says the offset was left out.
+- Applied when no item is marked, as before.
+- An error when only some are. No one value suits them all, so the caller must choose. This
+  follows the rule for mixed resolutions without `resolution=`.
+
+`True` and `False` still decide outright. `ReadOptions.drop_offset` accepts `"auto"` in a
+request, but a record always stores the decision, so a data_ref reopens identically whatever the
+items say later. Records made before this change hold `None`, which still means "apply", so
+their values do not change. The Sydney network test now checks both sides of the quirk: the
+default gives no negative reflectance, and `drop_offset=False` does.
+
+**Alternatives.**
+- Keep the explicit option only (D-030): it stays wrong by default for nearly every recent
+  Earth Search scene.
+- Leave the offset out per item, by its own mark: it could mix two meanings of a value in one
+  band.
+- Decide again each time a data_ref is opened: a data_ref's values could change after the fact.
+
+## D-047 The agent's analyses are scripts you review (Phase 2, 2026-10-29)
+
+**Context.** The concept for the map interface was a Cursor-style loop: the agent writes code,
+the scientist reads it and decides on changes. The MVP agent ran inline code, kept only in run
+folders, so its work was hard to see and could not be edited and re-run. The user asked for the
+loop. They agreed that new scripts could run on the agent's own say-so, with changes to existing
+ones waiting for them, and that "review every run" should be available too.
+
+**Choice.** In the app, the agent works on files in the project's `analysis/` folder.
+- **Files only.** Its tools are the loci MCP server plus Claude Code's Read, Write and Edit. A
+  PreToolUse hook limits those three to `.py` files under `analysis/`, whatever Claude Code's own
+  rules would allow, so data still reaches it only through loci's tools. `run` must be given a
+  script by `path=` under `analysis/`; `code=` is refused with a message saying so.
+- **Every call is checked.** Nothing is allowed up front: each call reaches a `can_use_tool`
+  callback.
+  - Writing a new script goes ahead.
+  - A Write or Edit that would change an existing script pauses the agent. The app gets a
+    `proposal` event with the text before and after, and shows it as an inline diff. The
+    scientist's Accept or Reject comes back through `/api/agent/decide`.
+  - A rejection reaches the agent as the tool's error, with the scientist's note.
+  - With review set to "every run", runs pause the same way, showing the script and its inputs.
+  - The query runs beside the event stream, so a review reaches the app while the agent waits.
+    A turn the browser abandons cancels what it was waiting on.
+- **Results link to their code.**
+  - `run` now records a script by its absolute path.
+  - A layer's detail links to the script under `analysis/` and says when the file has changed
+    since that run.
+  - `/api/runs/{id}/script` shows the exact version that ran.
+- **Live files.** The event stream says when scripts change, so the editor reloads a script the
+  agent saved, or warns if there are unsaved edits.
+- **Follow-ups.** The agent ends answers with a "Next:" list, which the chat shows as one-click
+  questions.
+
+Claude Code in a terminal is unchanged: it still runs `code=` scripts, and its own permission
+settings govern edits.
+
+**Alternatives.**
+- Save inline code to `analysis/` automatically: files appear, but the agent does not know their
+  names and cannot edit them.
+- Review only after the fact: simpler, but a change that runs before anyone reads it is what
+  the scientist asked not to have.
+- A custom write-script tool on the MCP server: it duplicates Claude Code's well-tested editing
+  tools, and the rule is to add loci tools only when a benchmark needs them.

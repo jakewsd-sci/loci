@@ -59,8 +59,8 @@ src/loci/        the package
   hooks.py       Claude Code hook that validates new data_refs (`loci-hook`)             [M5]
   web/           local HTTP API for the map interface (`loci-app`)                       [P2]
     layers.py    layer list, map tiles (rio-tiler; time stacks from memory), point values
-    agent.py     Claude Agent SDK bridge: loci's MCP server, the validation hook, events
-    project.py   the project's scripts under analysis/
+    agent.py     Claude Agent SDK bridge: loci tools, scripts in analysis/, reviews, events
+    project.py   the project's scripts under analysis/, links from results to them
     app.py       Starlette routes, server-sent events, serves app/dist
 app/             React + TypeScript web app (Vite): MapLibre map, Monaco editor          [P2]
 tests/           pytest suite; fixtures are generated in code by loci.synthetic
@@ -124,4 +124,7 @@ Phase 2, the map interface:
 - [x] MVP: `loci-app` with map, layers, inspector, agent with model choice, code editor, lineage
 - [x] P2.1: time stacks as tiles with a date control, values through time at a point, draw an area
       to ask about, failed checks shown on the map, `run` checks its inputs together (D-044, D-045)
+- [x] P2.2: the agent writes its analyses as scripts under analysis/, changes (and optionally
+      runs) wait for review as diffs, results link to their scripts, follow-up questions;
+      offsets already applied are left out by default; agents load `scl` (D-046, D-047)
 - [ ] Next: chosen with the user

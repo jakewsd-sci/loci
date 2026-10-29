@@ -110,13 +110,13 @@ def test_stac_pixels_load_preview_and_validate_over_sydney(ws: Workspace) -> Non
     assert Path(footprints.path).exists()
 
 
-def test_drop_offset_gives_non_negative_reflectance_over_sydney(ws: Workspace) -> None:
+def test_the_offset_already_applied_is_left_out_over_sydney(ws: Workspace) -> None:
     # Earth Search marks these scenes as already offset, yet declares offset -0.1 (D-026). Unlike
     # the tests above, this one tracks that upstream quirk on purpose: if Earth Search corrects
-    # its metadata, it fails, and drop_offset is no longer needed for these scenes.
+    # its metadata, it fails, and the automatic choice (D-046) no longer has to step in.
     search = stac_search(ws, bbox=SYDNEY, start="2024-06-01", end="2024-06-30", max_cloud=20)
-    declared = load(ws, search.data_ref, bands=["red"])
-    dropped = load(ws, search.data_ref, bands=["red"], drop_offset=True)
+    automatic = load(ws, search.data_ref, bands=["red"])
+    declared = load(ws, search.data_ref, bands=["red"], drop_offset=False)
 
     def red_min(ref: str) -> float:
         report = validate(ws, [ref], variables={"red": "reflectance"})
@@ -127,8 +127,8 @@ def test_drop_offset_gives_non_negative_reflectance_over_sydney(ws: Workspace) -
 
     assert any("counted twice" in w for w in declared.warnings)
     assert red_min(declared.data_ref) < 0  # impossible reflectance with the declared offset
-    assert red_min(dropped.data_ref) >= 0
-    assert any("not applied" in n for n in dropped.notes)
+    assert red_min(automatic.data_ref) >= 0
+    assert any("left out" in n for n in automatic.notes)
 
 
 def test_ndvi_run_over_sydney_traces_back_to_earth_search(ws: Workspace) -> None:

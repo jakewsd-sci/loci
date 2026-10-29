@@ -91,11 +91,13 @@ def run(
     (run_dir / "stdout.txt").write_text(stdout)
     (run_dir / "stderr.txt").write_text(stderr)
 
+    # A script file is recorded by its absolute path, so lineage finds it from any directory.
+    script_file = str(Path(path).expanduser().resolve()) if path is not None else None
     context = provenance.new_record(
         produced_by="run",
         call=provenance.tool_call(
             "run",
-            {"path": path, "inputs": declared, "parameters": parameters, "timeout": timeout},
+            {"path": script_file, "inputs": declared, "parameters": parameters, "timeout": timeout},
         ),
         inputs=[
             SourceInput(name=name, data_ref=ref, uri=records[name].source.uri)

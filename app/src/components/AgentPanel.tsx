@@ -1,9 +1,24 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { refsIn, streamAgent } from "../api";
 import { Icon } from "../icons";
-import type { AgentEvent, Bounds, CheckStatus, LayerInfo, MapFocus, ValidationReport } from "../types";
+import type {
+  AgentEvent,
+  Bounds,
+  CheckStatus,
+  LayerInfo,
+  MapFocus,
+  Proposal,
+  Review,
+  ValidationReport,
+} from "../types";
 import { focusFor } from "./Checks";
 import { StatusBadge } from "./LayersPanel";
+
+interface ReviewState {
+  id: string;
+  kind: Proposal["kind"];
+  state: "waiting" | "accepted" | "rejected";
+}
 
 type Item =
   | { kind: "user"; text: string }
@@ -16,7 +31,9 @@ type Item =
       state: "running" | "ok" | "error";
       result: string;
       checks: { data_ref: string; status: CheckStatus }[];
+      review: ReviewState | null;
     }
+  | { kind: "review"; review: ReviewState; path: string } // one no tool call claimed
   | { kind: "done"; turns: number; cost: number | null; seconds: number }
   | { kind: "error"; message: string };
 
@@ -29,6 +46,16 @@ interface Props {
   shownTime: string | null; // the date the map shows for the selected layer
   point: [number, number] | null;
   area: Bounds | null;
+  scripts: string[]; // paths under analysis/
+  openScript: string | null; // the script open in the editor
+  review: Review;
+  onReviewMode: (review: Review) => void;
+  onProposal: (proposal: Proposal) => void;
+  onDecision: (id: string) => void;
+  onTurnEnd: () => void;
+  onDecide: (proposal: Proposal, accepted: boolean, note: string) => void;
+  onShowReview: () => void;
+  onScriptTouched: (path: string) => void; // the agent wrote or edited this script
   onClearArea: () => void;
   onRef: (ref: string) => void;
   onFocus: (focus: MapFocus) => void;
@@ -77,11 +104,14 @@ function summarise(name: string, input: Record<string, unknown>): string {
       return `${base(input.uri)}${bands}`;
     }
     case "run": {
-      const lines = String(input.code ?? "").split("\n").filter((l) => l.trim()).length;
       const names = Object.keys((input.inputs as Record<string, string> | undefined) ?? {});
-      const what = input.path ? base(input.path) ?? "" : `inline script, ${lines} lines`;
+      const what = String(input.path ?? "inline script");
       return names.length ? `${what} · inputs ${names.join(", ")}` : what;
     }
+    case "Read":
+    case "Write":
+    case "Edit":
+      return String(input.file_path ?? "");
     case "validate":
       return (input.data_refs as string[] | undefined)?.join(", ") ?? "";
     case "lineage":
@@ -91,8 +121,29 @@ function summarise(name: string, input: Record<string, unknown>): string {
   }
 }
 
-/** Light markdown: paragraphs, bullet lists, **bold**, `code`, and data_refs as links. */
-export function Rich({ text, onRef }: { text: string; onRef: (ref: string) => void }) {
+/** A reply's text and the follow-up questions in its closing "Next:" list, if it has one. */
+export function followUps(text: string): { body: string; next: string[] } {
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => /^\s*\**next:?\**\s*$/i.test(l));
+  if (at < 0) return { body: text, next: [] };
+  const rest = lines.slice(at + 1).filter((l) => l.trim());
+  if (!rest.length || !rest.every((l) => /^\s*[-*] /.test(l))) return { body: text, next: [] };
+  const next = rest.map((l) => l.replace(/^\s*[-*] /, "").trim()).slice(0, 3);
+  return { body: lines.slice(0, at).join("\n").trimEnd(), next };
+}
+
+/** Light markdown: paragraphs, bullet lists, tables, **bold**, `code`, data_refs as links, and
+ * a closing "Next:" list as questions to ask with one click. */
+export function Rich({
+  text,
+  onRef,
+  onAsk,
+}: {
+  text: string;
+  onRef: (ref: string) => void;
+  onAsk?: (question: string) => void;
+}) {
+  const { body, next } = followUps(text);
   const inline = (line: string): ReactNode[] =>
     line.split(/(\*\*[^*]+\*\*|`[^`]+`|\b(?:raster|vector)-[0-9a-f]{8}\b)/g).map((part, i) => {
       if (/^(?:raster|vector)-[0-9a-f]{8}$/.test(part))
@@ -108,7 +159,7 @@ export function Rich({ text, onRef }: { text: string; onRef: (ref: string) => vo
     });
   return (
     <div className="reply">
-      {text.split(/\n{2,}/).map((block, b) => {
+      {body.split(/\n{2,}/).map((block, b) => {
         const lines = block.split("\n").filter((l) => l.trim());
         if (lines.length > 1 && lines.every((l) => /^\s*\|.*\|\s*$/.test(l))) {
           const cells = (l: string) => l.trim().slice(1, -1).split("|").map((c) => c.trim());
@@ -145,6 +196,15 @@ export function Rich({ text, onRef }: { text: string; onRef: (ref: string) => vo
           </p>
         );
       })}
+      {next.length > 0 && onAsk && (
+        <div className="suggestions follow-ups" role="group" aria-label="Ask next">
+          {next.map((q) => (
+            <button key={q} type="button" className="chip" onClick={() => onAsk(q)}>
+              <Icon name="next" size={12} /> {q}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -156,7 +216,16 @@ function apply(items: Item[], event: AgentEvent): Item[] {
     case "tool":
       return [
         ...items,
-        { kind: "step", id: event.id, name: event.name, input: event.input, state: "running", result: "", checks: [] },
+        {
+          kind: "step",
+          id: event.id,
+          name: event.name,
+          input: event.input,
+          state: "running",
+          result: "",
+          checks: [],
+          review: null,
+        },
       ];
     case "tool_result":
       return items.map((it) =>
@@ -170,6 +239,20 @@ function apply(items: Item[], event: AgentEvent): Item[] {
           ? { ...it, checks: [...it.checks.filter((c) => c.data_ref !== event.data_ref), event] }
           : it,
       );
+    case "proposal": {
+      const review: ReviewState = { id: event.id, kind: event.kind, state: "waiting" };
+      if (items.some((it) => it.kind === "step" && it.id === event.tool_use_id))
+        return items.map((it) => (it.kind === "step" && it.id === event.tool_use_id ? { ...it, review } : it));
+      return [...items, { kind: "review", review, path: event.path }];
+    }
+    case "decision": {
+      const state = event.accepted ? "accepted" : "rejected";
+      return items.map((it) =>
+        (it.kind === "step" || it.kind === "review") && it.review?.id === event.id
+          ? { ...it, review: { ...it.review, state } }
+          : it,
+      );
+    }
     case "done":
       return [...items, { kind: "done", turns: event.turns, cost: event.cost_usd, seconds: event.seconds }];
     case "error":
@@ -201,6 +284,16 @@ export function AgentPanel({
   shownTime,
   point,
   area,
+  scripts,
+  openScript,
+  review,
+  onReviewMode,
+  onProposal,
+  onDecision,
+  onTurnEnd,
+  onDecide,
+  onShowReview,
+  onScriptTouched,
   onClearArea,
   onRef,
   onFocus,
@@ -211,6 +304,8 @@ export function AgentPanel({
   const [attach, setAttach] = useState(true);
   const session = useRef<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const proposals = useRef(new Map<string, Proposal>());
+  const writes = useRef(new Map<string, string>()); // tool call id -> script it writes
   const end = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -230,14 +325,26 @@ export function AgentPanel({
       const bbox = area.map(round).join(", ");
       context.push(`Area drawn on the map, as a bbox in lon/lat (WGS 84): [${bbox}].`);
     }
+    if (scripts.length) context.push(`Scripts in analysis/: ${scripts.map((s) => s.replace(/^analysis\//, "")).join(", ")}.`);
+    if (openScript) context.push(`Open in the editor: ${openScript}.`);
     setItems((it) => [...it, { kind: "user", text: message }]);
     setDraft("");
     setBusy(true);
     abort.current = new AbortController();
     try {
-      const body = { message: [...context, message].join("\n"), model, session_id: session.current };
+      const body = { message: [...context, message].join("\n"), model, session_id: session.current, review };
       for await (const event of streamAgent(body, abort.current.signal)) {
         if (event.type === "session" || event.type === "done") session.current = event.session_id;
+        if (event.type === "proposal") {
+          proposals.current.set(event.id, event);
+          onProposal(event);
+        }
+        if (event.type === "decision") onDecision(event.id);
+        // Once the agent has written or edited a script, show it in the editor.
+        if (event.type === "tool" && (event.name === "Write" || event.name === "Edit"))
+          writes.current.set(event.id, String(event.input.file_path ?? ""));
+        if (event.type === "tool_result" && !event.is_error && writes.current.has(event.id))
+          onScriptTouched(writes.current.get(event.id)!);
         setItems((it) => apply(it, event));
       }
     } catch (e) {
@@ -245,7 +352,41 @@ export function AgentPanel({
     } finally {
       setBusy(false);
       abort.current = null;
+      onTurnEnd();
     }
+  }
+
+  function reviewCard(state: ReviewState) {
+    const proposal = proposals.current.get(state.id);
+    const isEdit = state.kind === "edit";
+    if (state.state !== "waiting")
+      return (
+        <div className="review-card">
+          <span className={`badge ${state.state === "accepted" ? "pass" : "fail"}`}>
+            {state.state === "accepted" ? (isEdit ? "Accepted" : "Approved") : isEdit ? "Rejected" : "Not run"}
+          </span>
+        </div>
+      );
+    return (
+      <div className="review-card waiting">
+        <span>{isEdit ? "Waiting for you to review this change." : "Waiting for you to approve this run."}</span>
+        <div className="actions">
+          <button type="button" className="secondary" onClick={onShowReview}>
+            <Icon name="code" size={13} /> {isEdit ? "Review the change" : "See the script"}
+          </button>
+          {proposal && (
+            <>
+              <button type="button" className="primary" onClick={() => onDecide(proposal, true, "")}>
+                {isEdit ? "Accept" : "Run it"}
+              </button>
+              <button type="button" className="secondary" onClick={() => onDecide(proposal, false, "")}>
+                {isEdit ? "Reject" : "Don't run"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -254,8 +395,9 @@ export function AgentPanel({
         {items.length === 0 && (
           <div className="reply">
             <p style={{ color: "var(--muted)" }}>
-              Ask a question about a place. The agent works through loci&apos;s tools; every layer it
-              makes appears on the map, checked automatically.
+              Ask a question about a place. The agent works through loci&apos;s tools and writes each
+              analysis as a script you can read in the editor; every layer it makes appears on the
+              map, checked automatically.
             </p>
             <div className="suggestions">
               {(area ? [...AREA_SUGGESTIONS, ...SUGGESTIONS.slice(1)] : SUGGESTIONS).map((s) => (
@@ -271,19 +413,30 @@ export function AgentPanel({
             case "user":
               return <div key={i} className="bubble">{item.text}</div>;
             case "text":
-              return <Rich key={i} text={item.text} onRef={onRef} />;
+              return <Rich key={i} text={item.text} onRef={onRef} onAsk={busy ? undefined : (q) => void send(q)} />;
+            case "review":
+              return (
+                <div key={i} className="step">
+                  <div className="top">
+                    <code className="tool">review</code>
+                    <span className="what">{item.path}</span>
+                  </div>
+                  {reviewCard(item.review)}
+                </div>
+              );
             case "step":
               return (
                 <div key={i} className="step">
                   <div className="top">
                     <code className="tool">{item.name}</code>
                     <span className="what">{summarise(item.name, item.input)}</span>
-                    {item.state === "running" && <span className="spinner" aria-label="Running" />}
-                    {item.state === "error" && <span className="badge fail">Error</span>}
+                    {item.state === "running" && !item.review && <span className="spinner" aria-label="Running" />}
+                    {item.state === "error" && !item.review && <span className="badge fail">Error</span>}
                     {item.checks.map((c) => (
                       <StatusBadge key={c.data_ref} status={c.status} />
                     ))}
                   </div>
+                  {item.review && reviewCard(item.review)}
                   {(() => {
                     const report = item.state === "ok" ? inputChecks(item.name, item.result) : null;
                     if (!report) return null;
@@ -311,11 +464,18 @@ export function AgentPanel({
                         ))}
                     </div>
                   )}
-                  {item.result && (
+                  {item.name === "Write" && typeof item.input.content === "string" ? (
                     <details>
-                      <summary>{item.state === "error" ? "What went wrong" : "Result"}</summary>
-                      <pre>{item.result}</pre>
+                      <summary>Script</summary>
+                      <pre>{item.input.content}</pre>
                     </details>
+                  ) : (
+                    item.result && (
+                      <details>
+                        <summary>{item.state === "error" ? "What went wrong" : "Result"}</summary>
+                        <pre>{item.result}</pre>
+                      </details>
+                    )
                   )}
                 </div>
               );
@@ -375,6 +535,17 @@ export function AgentPanel({
                 Attach map selection
               </button>
             )}
+            <label htmlFor="review" className="visually-hidden">What waits for your answer</label>
+            <select
+              id="review"
+              className="review-mode"
+              value={review}
+              title="What waits for your answer before the agent goes on"
+              onChange={(e) => onReviewMode(e.target.value as Review)}
+            >
+              <option value="changes">Review changes</option>
+              <option value="runs">Review every run</option>
+            </select>
             {busy ? (
               <button type="button" className="send" aria-label="Stop" onClick={() => abort.current?.abort()}>
                 <span className="spinner" style={{ borderTopColor: "#0a0b0d" }} />
