@@ -119,6 +119,10 @@ Step through the dates of a time stack on one colour scale, click a place to cha
 through time (cloudy dates are marked, not hidden), draw a box to ask the agent about an area,
 and show a failed check on the map to see where the problem lies.
 
+loci reads GeoTIFFs, GeoPackages, GeoJSON, shapefiles, GeoParquet, point tables (CSV), and
+gridded data as NetCDF files or Zarr stores, such as ERA5 from the cloud. For gridded data, the
+agent chooses the variables, a level, a period and an area, so only that part is read.
+
 Your data come in three ways. The layers panel lists the files loci can read in the folder,
 and a click puts one on the map. Files dropped on the map are saved in `data/` and mapped. The
 agent finds and loads data too. Every layer is checked as it arrives. Export a layer from its

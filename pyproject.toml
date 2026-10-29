@@ -5,11 +5,13 @@ description = "Engine for an agent harness that runs geospatial workflows scient
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiohttp>=3.14.5",
     "claude-agent-sdk>=0.2.173",
     "dask[array]>=2026.8.0",
     "geopandas>=1.2.0",
     "matplotlib>=3.11.2",
     "mcp>=2.3.0",
+    "netcdf4>=1.7.5.1.post1",
     "numpy>=2.5.4",
     "odc-stac>=0.5.3",
     "pandas>=3.1.0",
@@ -23,6 +25,7 @@ dependencies = [
     "rioxarray>=0.23.0",
     "shapely>=2.2.0",
     "xarray>=2026.9.0",
+    "zarr>=3.4.2",
 ]
 
 [project.scripts]

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from matplotlib.image import imread
 
+from loci.errors import LociError
 from loci.models import RasterSummary
 from loci.tools.inspect import inspect
 from loci.tools.lineage import lineage
@@ -152,3 +153,47 @@ def test_ndvi_run_over_sydney_traces_back_to_earth_search(ws: Workspace) -> None
     assert [s.produced_by for s in traced.steps] == ["run", "load", "stac_search"]
     assert traced.original_sources == [EARTH_SEARCH]
     assert traced.stac_item_count == search.items
+
+
+ERA5 = (
+    "https://storage.googleapis.com/gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
+)
+
+
+def test_a_day_of_era5_over_sydney_from_the_cloud_archive(ws: Workspace) -> None:
+    from loci.web import layers
+
+    with pytest.raises(LociError, match="time steps") as too_long:
+        load(ws, ERA5, bands=["2m_temperature"])
+    day = load(
+        ws,
+        ERA5,
+        bands=["2m_temperature"],
+        select={"time": ["2024-01-15T00:00", "2024-01-15T23:00"]},
+        bbox=[150.5, -34.5, 151.5, -33.5],
+    )
+    described = inspect(ws, day.data_ref)
+
+    assert too_long.value.hint is not None and 'select={"time"' in too_long.value.hint
+    assert isinstance(day.summary, RasterSummary) and day.summary.dims == {
+        "time": 24,
+        "y": 5,
+        "x": 5,
+    }
+    assert day.summary.crs_source == "assumed"
+    band = described.summary.bands[0]  # type: ignore[union-attr]
+    assert band.units == "K" and band.stats is not None
+    assert 280 < (band.stats.mean or 0) < 315  # a January day in Sydney, in kelvin
+    # Each hour is stored as one global chunk, so a click reads one per hour: a day's 24 are
+    # within the budget, three days' 72 are not, and nothing is downloaded to say so.
+    point = layers.point_values(ws, day.data_ref, 151.0, -34.0)
+    days = load(
+        ws,
+        ERA5,
+        bands=["2m_temperature"],
+        select={"time": ["2024-01-15T00:00", "2024-01-17T23:00"]},
+        bbox=[150.5, -34.5, 151.5, -33.5],
+    )
+    assert len(point.bands[0].values) == 24
+    with pytest.raises(LociError, match="stored 721 by 1440 cells at a time"):
+        layers.point_values(ws, days.data_ref, 151.0, -34.0)

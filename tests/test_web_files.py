@@ -118,3 +118,14 @@ def test_layers_are_exported_beside_the_data_and_downloaded(
     assert "attachment" in download.headers["content-disposition"]
     assert wrong.status_code == 400 and "cannot be exported" in wrong.json()["error"]
     assert client.get("/api/exports/..%2Fram.tif").status_code == 404
+
+
+def test_a_zarr_store_is_listed_once_and_mapped(client: TestClient, project: Path) -> None:
+    syn.write_climate_zarr(project / "era5.zarr")
+
+    listed = client.get("/api/files").json()["files"]
+    loaded = client.post("/api/files/load", json={"path": "era5.zarr"})
+
+    assert [(f["path"], f["format"]) for f in listed] == [("era5.zarr", "zarr")]
+    assert listed[0]["size"] > 0
+    assert loaded.status_code == 200 and loaded.json()["summary"]["dims"]["time"] == 240

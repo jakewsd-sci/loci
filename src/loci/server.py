@@ -45,6 +45,9 @@ loci runs geospatial analysis that a scientist can trust and trace.
 - For Sentinel-2 L2A, load the scl band (scene classification) with the bands you analyse and
   mask cloud, shadow and cirrus with it, saying how much was masked. Scene cloud cover alone
   does not say which pixels are cloudy.
+- NetCDF files and Zarr stores (such as ERA5) load as rasters: bands= names the variables,
+  select= picks a level ({"level": 850}) and a period ({"time": [start, end]}), and bbox= an
+  area. Read only what the question needs; units come back with each band.
 - Validate before drawing conclusions, with every data_ref that will be combined in one call.
   Report warn and fail results with their hints; do not hide them.
 - run executes Python for anything the tools do not do. Read data only with

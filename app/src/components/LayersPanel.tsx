@@ -25,7 +25,10 @@ interface Props {
 }
 
 const EXPORTS: Record<LayerInfo["kind"], { format: string; label: string }[]> = {
-  raster: [{ format: "geotiff", label: "GeoTIFF (.tif)" }],
+  raster: [
+    { format: "geotiff", label: "GeoTIFF (.tif)" },
+    { format: "netcdf", label: "NetCDF (.nc)" },
+  ],
   vector: [
     { format: "gpkg", label: "GeoPackage (.gpkg)" },
     { format: "geojson", label: "GeoJSON (.geojson)" },
@@ -61,7 +64,8 @@ function ExportSetting({ layer, step, onExport }: { layer: LayerInfo; step: numb
     setBusy(true);
     setError(null);
     try {
-      setDone(await onExport(layer.data_ref, format, stack ? (step ?? 0) : null));
+      // A GeoTIFF holds the date shown; NetCDF holds every date.
+      setDone(await onExport(layer.data_ref, format, stack && format === "geotiff" ? (step ?? 0) : null));
     } catch (e) {
       setDone(null);
       setError(e instanceof Error ? e.message : String(e));
@@ -73,7 +77,7 @@ function ExportSetting({ layer, step, onExport }: { layer: LayerInfo; step: numb
   return (
     <div className="setting export">
       <label className="setting-head" htmlFor="export-format">
-        <span>Export{stack ? " the date shown" : ""}</span>
+        <span>Export{stack ? (format === "geotiff" ? " the date shown" : " every date") : ""}</span>
       </label>
       <div className="export-row">
         <select id="export-format" value={format} onChange={(e) => setFormat(e.target.value)}>

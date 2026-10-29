@@ -141,13 +141,15 @@ def _ws(request: Request) -> Workspace:
     return ws
 
 
-async def _json(work: Callable[[], Any]) -> JSONResponse:
-    """Run blocking work in a thread and return its result as JSON."""
+async def _json(work: Callable[[], Any]) -> Response:
+    """Run blocking work in a thread and return its result as JSON. Models serialise themselves,
+    so a NaN, such as a band's nodata, travels as "NaN" as it does over MCP."""
     result = await run_in_threadpool(work)
     if isinstance(result, BaseModel):
-        return JSONResponse(result.model_dump(mode="json"))
-    if isinstance(result, list):
-        return JSONResponse([r.model_dump(mode="json") for r in result])
+        return Response(result.model_dump_json(), media_type="application/json")
+    if isinstance(result, list) and all(isinstance(r, BaseModel) for r in result):
+        body = "[" + ",".join(r.model_dump_json() for r in result) + "]"
+        return Response(body, media_type="application/json")
     return JSONResponse(result)
 
 

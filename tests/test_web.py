@@ -288,4 +288,4 @@ def test_a_demo_project_offers_its_questions(ws: Workspace, tmp_path: Path) -> N
 
     assert plain["suggestions"] == []
     assert offered[0].startswith("data/dem.tif is an elevation model")
-    assert len(offered) == 5
+    assert len(offered) == 6
