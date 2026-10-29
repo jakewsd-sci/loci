@@ -87,6 +87,11 @@ agent to ask (Opus, Sonnet or Haiku), the scripts it runs, and each layer's line
 Step through the dates of a time stack on one colour scale, click a place to chart its values
 through time (cloudy dates are marked, not hidden), draw a box to ask the agent about an area,
 and show a failed check on the map to see where the problem lies.
+
+The agent writes each analysis as a script in `analysis/`, where you can read, edit and run it.
+When it wants to change a script you already have, it waits and shows you the change as a diff
+to accept or reject; set the composer to "Review every run" to approve each run as well. Every
+result links to its script, and to the exact version that made it.
 It needs [Node 22](https://nodejs.org/) once to build, and the `claude` CLI for the agent.
 
 ```sh

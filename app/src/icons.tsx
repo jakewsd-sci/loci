@@ -30,6 +30,7 @@ const paths: Record<string, string[]> = {
   spark: ["M12 4v4", "M12 16v4", "M4 12h4", "M16 12h4"],
   target: ["M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14z", "M12 2v4", "M12 18v4", "M2 12h4", "M18 12h4"],
   area: ["M4 7V4h3", "M17 4h3v3", "M20 17v3h-3", "M7 20H4v-3", "M10 4h4", "M10 20h4", "M4 10v4", "M20 10v4"],
+  check: ["m5 12 5 5 9-10"],
   prev: ["m15 6-6 6 6 6"],
   next: ["m9 6 6 6-6 6"],
 };

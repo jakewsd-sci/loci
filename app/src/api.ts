@@ -5,7 +5,9 @@ import type {
   LayerInfo,
   Model,
   PointValues,
+  Review,
   RunResult,
+  RunScript,
   ScriptFile,
   ValidationReport,
 } from "./types";
@@ -55,11 +57,14 @@ export const api = {
   run: (path: string, inputs: Record<string, string>) =>
     send<RunResult>("/api/run", "POST", { path, inputs }),
   models: () => request<{ models: Model[]; default: string }>("/api/models"),
+  runScript: (runId: string) => request<RunScript>(`/api/runs/${runId}/script`),
+  decide: (id: string, accepted: boolean, note = "") =>
+    send<{ id: string; accepted: boolean }>("/api/agent/decide", "POST", { id, accepted, note }),
 };
 
 /** Send a chat message and yield the agent's events as they stream in. */
 export async function* streamAgent(
-  body: { message: string; model: string; session_id: string | null },
+  body: { message: string; model: string; session_id: string | null; review: Review },
   signal?: AbortSignal,
 ): AsyncGenerator<AgentEvent> {
   const response = await fetch("/api/agent", {
@@ -91,10 +96,12 @@ export async function* streamAgent(
   }
 }
 
-/** Call `onChange` whenever the workspace's layers change; returns a function that stops. */
-export function watchWorkspace(onChange: () => void): () => void {
+/** Call `onLayers` when the workspace's layers change and `onScripts` when a script under
+ * analysis/ is added, removed or saved; returns a function that stops. */
+export function watchWorkspace(onLayers: () => void, onScripts: () => void): () => void {
   const source = new EventSource("/api/events");
-  source.addEventListener("layers", onChange);
+  source.addEventListener("layers", onLayers);
+  source.addEventListener("scripts", onScripts);
   return () => source.close();
 }
 
