@@ -55,6 +55,7 @@ SCL_CLASSES = {
     11: "snow or ice",
 }
 SCL_OBSCURED = frozenset({0, 1, 3, 8, 9, 10})
+SCL_BAND = "scl"
 SEARCH_KEY = "loci:search"
 BOA_APPLIED = "earthsearch:boa_offset_applied"
 GROUPBY = "solar_day"

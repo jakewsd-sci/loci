@@ -57,6 +57,9 @@ def test_search_summarises_the_items(ws: Workspace, catalogue: FakeCatalogue) ->
     assert [row.id for row in result.sample] == ["SYN_20240304", "SYN_20240314", "SYN_20240324"]
     assert result.bands == ["red", "nir", "scl"]
     assert result.warnings == []
+    # Scene cloud cover is not per pixel: the result points to the scene classification band.
+    scl = [n for n in result.notes if n.startswith("Cloud cover above is per scene")]
+    assert len(scl) == 1 and "'scl'" in scl[0]
     assert catalogue.calls[0]["datetime_range"] == "2024-03-01/2024-03-31"
     assert catalogue.calls[0]["max_cloud"] == 80
     assert catalogue.calls[0]["bbox"] == tuple(AREA)

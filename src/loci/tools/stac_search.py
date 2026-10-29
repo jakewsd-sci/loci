@@ -15,7 +15,14 @@ from shapely.geometry import mapping
 from loci import provenance
 from loci.errors import LociError
 from loci.io import STAC_ITEMS, read
-from loci.io.stac import EARTH_SEARCH, loadable_bands, save_items, search_items
+from loci.io.stac import (
+    EARTH_SEARCH,
+    SCL_BAND,
+    SCL_OBSCURED,
+    loadable_bands,
+    save_items,
+    search_items,
+)
 from loci.models import (
     Bounds,
     ItemRow,
@@ -211,6 +218,13 @@ def _summarise(
         notes.append(
             f"Load pixels with load('{data_ref}', bands=[...]). The data_ref is also a vector "
             "layer of footprints for inspect, validate (time_column='datetime') and preview."
+        )
+    if items and SCL_BAND in loadable_bands(items[0]):
+        classes = ", ".join(str(c) for c in sorted(SCL_OBSCURED))
+        notes.append(
+            f"Cloud cover above is per scene. To mask cloud per pixel, load '{SCL_BAND}' (scene "
+            "classification, 20 m) with the other bands, adding resolution=10 for 10 m bands, "
+            f"and mask its classes {classes} (no data, defective, cloud shadow, cloud, cirrus)."
         )
     return StacSearchResult(
         data_ref=data_ref,

@@ -42,6 +42,9 @@ loci runs geospatial analysis that a scientist can trust and trace.
 - A usual order: stac_search or load, then inspect, validate, preview, run, and lineage.
 - Nothing is reprojected, resampled or dropped unless you ask (for example resolution= or
   output_crs= in load). Assumptions come back as warnings: pass them on to the user.
+- For Sentinel-2 L2A, load the scl band (scene classification) with the bands you analyse and
+  mask cloud, shadow and cirrus with it, saying how much was masked. Scene cloud cover alone
+  does not say which pixels are cloudy.
 - Validate before drawing conclusions, with every data_ref that will be combined in one call.
   Report warn and fail results with their hints; do not hide them.
 - run executes Python for anything the tools do not do. Read data only with
