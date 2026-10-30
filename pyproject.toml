@@ -1,6 +1,6 @@
 [project]
 name = "loci"
-version = "0.1.0"
+version = "0.4.0"
 description = "Engine for an agent harness that runs geospatial workflows scientists can trust"
 readme = "README.md"
 requires-python = ">=3.12"

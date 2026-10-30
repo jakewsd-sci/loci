@@ -1,7 +1,7 @@
 {
   "name": "loci-app",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "The loci map interface: map, layers, code and agent over the loci engine.",
   "type": "module",
   "scripts": {

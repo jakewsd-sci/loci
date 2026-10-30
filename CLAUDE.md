@@ -158,4 +158,6 @@ Phase 2, the map interface:
       offsets already applied are left out by default; agents load `scl` (D-046, D-047)
 - [x] P2.3: models from OpenAI, Gemini and OpenRouter in loci's own loop on Pydantic AI, with the
       same tools and reviews; Claude also through Bedrock, Vertex or Foundry; a picker (D-048)
-- [ ] P2.4 (agreed next): one-command install, bringing data in and out, a sandbox for `run`
+- [x] P2.4: one-command install on Windows, macOS and Linux (`loci` command, releases), data in
+      and out (files panel, drop, export), NetCDF and Zarr, scripts sandboxed; v0.4.0
+      (D-049 to D-052)
