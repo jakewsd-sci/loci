@@ -38,9 +38,8 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from loci.errors import LociError
+from loci.user_settings import KEYS_FILE, config_path
 
-CONFIG_ENV = "LOCI_CONFIG"
-KEYS_FILE = "keys.toml"
 Engine = Literal["claude", "loop"]
 KeySource = Literal["environment", "app", "config"]
 
@@ -165,17 +164,6 @@ class Choice:
     api_key: str | None = None
     env: Mapping[str, str] = field(default_factory=dict)  # Claude: added to Claude Code's
     route: str | None = None
-
-
-def config_path(env: Mapping[str, str], *, windows: bool = os.name == "nt") -> Path:
-    """$LOCI_CONFIG, else config.toml in loci's folder of the user's settings: %APPDATA%\\loci on
-    Windows, $XDG_CONFIG_HOME/loci or ~/.config/loci elsewhere."""
-    if value := env.get(CONFIG_ENV):
-        return Path(value).expanduser()
-    if windows and (appdata := env.get("APPDATA")):
-        return Path(appdata) / "loci" / "config.toml"
-    base = env.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "loci" / "config.toml"
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:

@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 
 from loci.errors import LociError
+from loci.user_settings import config_path
 from loci.web.providers import (
     BY_ID,
     DEFAULT_MODEL,
     Settings,
-    config_path,
     configured,
     forget_key,
     load_settings,

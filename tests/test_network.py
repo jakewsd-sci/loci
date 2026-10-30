@@ -197,3 +197,25 @@ def test_a_day_of_era5_over_sydney_from_the_cloud_archive(ws: Workspace) -> None
     assert len(point.bands[0].values) == 24
     with pytest.raises(LociError, match="stored 721 by 1440 cells at a time"):
         layers.point_values(ws, days.data_ref, 151.0, -34.0)
+
+
+@pytest.mark.parametrize("mode", ["guard", "auto"])
+def test_a_sandboxed_run_reads_era5_over_https(
+    ws: Workspace, mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Zarr over HTTPS is read by Python itself, through any proxy: the guard lets the input's
+    host through, and srt too where it is installed (auto)."""
+    monkeypatch.setenv("LOCI_SANDBOX", mode)
+    hours = load(
+        ws,
+        ERA5,
+        bands=["2m_temperature"],
+        select={"time": ["2024-01-15T00:00", "2024-01-15T03:00"]},
+        bbox=[150.5, -34.5, 151.5, -33.5],
+    )
+    code = "from loci import script\nscript.save(script.read('t2m').mean('time'), 'mean.tif')\n"
+
+    result = run(ws, code=code, inputs={"t2m": hours.data_ref})
+
+    assert result.status == "ok", result.stderr
+    assert result.sandbox in ("guard", "os") and [o.file for o in result.outputs] == ["mean.tif"]
