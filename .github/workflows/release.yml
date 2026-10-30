@@ -2,12 +2,21 @@ name: Release
 
 # Builds the wheel people install, with the web app inside, and installs it on Windows, macOS and
 # Linux as the install scripts do. A tag such as v0.4.0 also publishes it as a GitHub release,
-# then runs the install scripts against that release (D-049).
+# then runs the install scripts against that release (D-049). Run by hand (Actions, Release, Run
+# workflow) with a tag, it publishes the branch it runs on and makes the tag there.
 on:
   push:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Publish as this release, such as v0.4.0 (leave empty to only build and test)"
+        required: false
+        default: ""
+
+env:
+  RELEASE: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: read
@@ -43,7 +52,7 @@ jobs:
             --output-file dist/constraints.txt
 
       - name: Check the wheel holds the web app and the tag's version
-        run: uv run --no-project --python 3.12 scripts/check_wheel.py dist "${GITHUB_REF_NAME}"
+        run: uv run --no-project --python 3.12 scripts/check_wheel.py dist "${RELEASE}"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -84,7 +93,7 @@ jobs:
 
   publish:
     name: publish the release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.tag, 'v')
     needs: install
     runs-on: ubuntu-latest
     permissions:
@@ -101,8 +110,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.whl dist/constraints.txt install.ps1 install.sh \
-            --title "loci $GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md
+          gh release create "$RELEASE" dist/*.whl dist/constraints.txt install.ps1 install.sh \
+            --target "$GITHUB_SHA" --title "loci $RELEASE" --notes-file docs/RELEASE_NOTES.md
 
   installed:
     name: install script (${{ matrix.os }})

@@ -35,7 +35,8 @@ npm install -g @anthropic-ai/sandbox-runtime  # optional: srt, the OS sandbox fo
 Run lint, format, mypy and pytest before every commit, and `npm run build` in `app/` when the app
 changes. CI runs the Python checks on Python 3.12 and 3.13, and on Windows and macOS, and builds
 the app on Node 22. The Release workflow builds the wheel, installs it on all three systems
-(`scripts/smoke_install.py`), and on a `v*` tag publishes it with `install.ps1` and `install.sh`.
+(`scripts/smoke_install.py`), and on a `v*` tag, or when run by hand with a tag, publishes it
+with `install.ps1` and `install.sh`.
 
 ## Using loci from Claude Code
 
