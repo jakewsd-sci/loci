@@ -10,14 +10,15 @@ import json
 import os
 import secrets
 import subprocess
-import sys
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from loci import provenance
+from loci import provenance, sandbox
 from loci.errors import LociError
-from loci.io import detect_format, read
+from loci.io import STAC_RASTER, detect_format, read
+from loci.io.stac import read_items
 from loci.models import (
     ReadOptions,
     RunOutput,
@@ -28,7 +29,7 @@ from loci.models import (
 )
 from loci.script import INPUTS_FILE, OUTPUTS_DIR, PARAMETERS_FILE, RUN_DIR_ENV, WARNINGS_FILE
 from loci.tools.validate import check_together, validate
-from loci.workspace import ROOT_ENV, Workspace
+from loci.workspace import ROOT_ENV, RefRecord, Workspace
 
 DEFAULT_TIMEOUT = 600.0
 MAX_TIMEOUT = 3600.0
@@ -67,6 +68,10 @@ def run(
     loci.script.output_path(filename)). After a successful run, spatial outputs become data_refs
     and are validated; every output gets a provenance record naming the script, its hash, the
     inputs and the parameters.
+
+    The script runs sandboxed (sandbox in the result, D-052): it writes only in its run folder,
+    reads no keys or credentials its inputs do not need, starts no programs, and reaches the
+    network only where its inputs are. What was stopped comes back as a warning.
     """
     source = _source(code, path)
     declared = inputs or {}
@@ -87,7 +92,8 @@ def run(
     (run_dir / OUTPUTS_DIR).mkdir()
 
     started_at = provenance.now()
-    status, exit_code, stdout, stderr, seconds = _execute(ws, run_dir, timeout)
+    started = sandbox.plan("script.py", run_dir, _input_uris(records.values()))
+    status, exit_code, stdout, stderr, seconds = _execute(ws, run_dir, timeout, started)
     (run_dir / "stdout.txt").write_text(stdout, encoding="utf-8")
     (run_dir / "stderr.txt").write_text(stderr, encoding="utf-8")
 
@@ -127,10 +133,12 @@ def run(
         stderr=_tail(stderr),
         outputs=outputs,
         input_checks=input_checks,
+        sandbox=started.mode,
         warnings=_input_warnings(input_checks)
         + _warnings(status, exit_code, timeout, outputs)
+        + _guard_warnings(stderr)
         + _script_warnings(run_dir),
-        notes=_notes(status, outputs),
+        notes=[*_notes(status, outputs), started.note],
     )
     (run_dir / "run.json").write_text(
         json.dumps(
@@ -172,8 +180,21 @@ def _new_run_dir(ws: Workspace) -> tuple[str, Path]:
         return run_id, run_dir
 
 
+def _input_uris(records: Iterable[RefRecord]) -> list[str]:
+    """What a script reads through its inputs: their files and URLs, and for inputs loaded from
+    STAC items, the assets of the bands that were loaded. The sandbox lets it reach these."""
+    uris = []
+    for record in records:
+        uris.append(record.source.uri)
+        if record.source.format == STAC_RASTER.name:
+            bands = record.source.options.bands or []
+            items = read_items(record.source.uri)[0]
+            uris += [item.assets[b].href for item in items for b in bands if b in item.assets]
+    return uris
+
+
 def _execute(
-    ws: Workspace, run_dir: Path, timeout: float
+    ws: Workspace, run_dir: Path, timeout: float, started: sandbox.Plan
 ) -> tuple[RunStatus, int | None, str, str, float]:
     env = {
         **os.environ,
@@ -182,11 +203,12 @@ def _execute(
         "PYTHONUNBUFFERED": "1",
         "PYTHONUTF8": "1",  # the script's files and output are UTF-8, whatever the system locale
         "MPLBACKEND": "Agg",
+        **started.env,
     }
-    started = time.monotonic()
+    began = time.monotonic()
     try:
         proc = subprocess.run(
-            [sys.executable, "script.py"],
+            started.command,
             cwd=run_dir,
             env=env,
             capture_output=True,
@@ -197,9 +219,9 @@ def _execute(
         )
     except subprocess.TimeoutExpired as e:
         # Output captured before the timeout arrives as bytes, whatever text= says.
-        return "timeout", None, _text(e.stdout), _text(e.stderr), time.monotonic() - started
+        return "timeout", None, _text(e.stdout), _text(e.stderr), time.monotonic() - began
     status: RunStatus = "ok" if proc.returncode == 0 else "error"
-    return status, proc.returncode, proc.stdout, proc.stderr, time.monotonic() - started
+    return status, proc.returncode, proc.stdout, proc.stderr, time.monotonic() - began
 
 
 def _output_files(outputs: Path) -> list[Path]:
@@ -254,6 +276,12 @@ def _input_warnings(report: ValidationReport | None) -> list[str]:
         return []
     found = " ".join(c.message for c in report.checks if c.status != "pass")
     return [f"The inputs were checked together: {report.status}. {found} See input_checks."]
+
+
+def _guard_warnings(stderr: str) -> list[str]:
+    """What the guard stopped, from the script's error output."""
+    stopped = [line.split("PermissionError: ", 1)[-1] for line in stderr.splitlines()]
+    return list(dict.fromkeys(line for line in stopped if line.startswith("loci's guard stopped")))
 
 
 def _script_warnings(run_dir: Path) -> list[str]:

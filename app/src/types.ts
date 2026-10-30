@@ -155,9 +155,13 @@ export interface RunResult {
   stderr: string;
   outputs: RunOutput[];
   input_checks: ValidationReport | null;
+  sandbox: Sandbox | null;
   warnings: string[];
   notes: string[];
 }
+
+/** How a script was kept in: the operating system's sandbox, loci's guard, or neither (D-052). */
+export type Sandbox = "os" | "guard" | "off";
 
 /** Something a check found, drawn on the map. */
 export type MapFocus =

@@ -176,6 +176,28 @@ A conversation stays with the kind of model that began it. Switching between Cla
 provider starts a new conversation, and the app says so before you send. OpenAI, Gemini and
 OpenRouter models can carry on each other's conversations.
 
+### Scripts in a sandbox
+
+Every script that `run` starts, the agent's or your own, is kept to its job. It writes only in
+its run folder (results are saved with `loci.script.save`), starts no other programs, reaches
+the network only where its declared inputs are, and cannot read loci's keys, SSH keys, or cloud
+credentials its inputs do not need. Anything stopped comes back as a warning with the run, and
+each run says how it was kept in.
+
+- **loci's guard** works everywhere, Windows included. It watches the script from inside Python,
+  so it catches mistakes, but not code in C libraries such as GDAL.
+- **The operating system's sandbox** is added on macOS and Linux (and WSL2) when Anthropic's
+  [sandbox runtime](https://github.com/anthropics/sandbox-runtime) is installed, and
+  holds everything the script does. Install it with Node 22 (on Linux it also needs
+  `bubblewrap`, `socat` and `ripgrep`); `loci doctor` says which you have:
+
+  ```sh
+  npm install -g @anthropic-ai/sandbox-runtime
+  ```
+
+To run a script that must reach other places, set `LOCI_SANDBOX=off` before starting loci;
+`LOCI_SANDBOX=guard` uses the guard alone.
+
 ## Benchmark
 
 Five geospatial questions on synthetic data with exactly known answers. Each has a trap that makes

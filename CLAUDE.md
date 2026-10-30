@@ -29,6 +29,7 @@ uv run loci-app            # the map interface at http://127.0.0.1:8765 (needs t
 cd app && npm install      # the web app's dependencies (Node 22)
 cd app && npm run build    # type-check and bundle into src/loci/web/static, which loci serves
 cd app && npm run dev      # Vite dev server with hot reload; proxies /api to loci-app
+npm install -g @anthropic-ai/sandbox-runtime  # optional: srt, the OS sandbox for run (D-052)
 ```
 
 Run lint, format, mypy and pytest before every commit, and `npm run build` in `app/` when the app
@@ -60,6 +61,9 @@ src/loci/        the package
   render.py      PNG drawing behind `preview`                                            [M3]
   provenance.py  provenance records: ledger under .loci/provenance/ plus file sidecars   [M4]
   script.py      helpers for scripts started by `run` (read, physical, save)             [M4]
+  sandbox.py     how `run` starts a script: srt where installed, always loci's guard     [P2]
+  guard.py       the guard: audit hooks that keep a script to its run folder and inputs  [P2]
+  user_settings.py  where the user's settings and keys live, outside every project       [P2]
   server.py      thin MCP wrapper over tools/ (`loci-mcp`)                               [M5]
   hooks.py       Claude Code hook that validates new data_refs (`loci-hook`)             [M5]
   cli.py         the `loci` command: open, demo, doctor, mcp                             [P2]
@@ -120,6 +124,10 @@ docs/DECISIONS.md  decision log
 - Every new data_ref or file a tool makes gets a provenance record (`loci.provenance`) naming its
   inputs, so `lineage` can trace it. Scripts for `run` read data only through declared inputs;
   `script.read()` gives physical values, and `raw=True` is for bands that must stay as stored.
+- Scripts started by `run` are sandboxed (D-052): they write only in their run folder, start no
+  programs, read no keys, and reach only their inputs' hosts. loci's guard does this everywhere;
+  Anthropic's sandbox runtime (`srt`) adds the OS's limits where installed. `LOCI_SANDBOX`
+  picks `auto`, `guard` or `off`. Give a new kind of input its hosts in `sandbox.reach`.
 - Add tools only when a benchmark task needs them. Ask before adding substantial dependencies.
 - Record significant decisions in `docs/DECISIONS.md`: one short entry with context, choice and
   alternatives.

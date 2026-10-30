@@ -47,6 +47,64 @@ jobs:
       - name: Test
         run: uv run pytest
 
+  # Scripts started by run go into Anthropic's sandbox runtime where it is installed (D-052):
+  # the whole suite again, with every run inside srt, on the systems it supports.
+  sandbox:
+    name: sandbox (srt on ${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: "Linux", os: ubuntu-latest }
+          - { label: "macOS", os: macos-latest }
+    env:
+      LOCI_TEST_SRT: required
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv and set the Python version
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.5"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Install the sandbox runtime
+        run: npm install -g @anthropic-ai/sandbox-runtime@0.0.81
+
+      # On Linux srt uses bubblewrap, socat and ripgrep. Ubuntu keeps capabilities from the user
+      # namespaces of programs without an AppArmor profile, and its profile for bubblewrap keeps
+      # them from namespaces made inside it, which srt's seccomp helper needs.
+      - name: Install what srt needs on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          for profile in $(grep -l -s -E "^ *profile [^ ]*bwrap" /etc/apparmor.d/* || true); do
+            echo "Unloading the AppArmor profile in $profile"
+            sudo apparmor_parser -R "$profile" || true
+          done
+
+      - name: Check that srt runs a program here
+        run: |
+          cd "$(mktemp -d)"
+          echo '{"network": {"allowedDomains": [], "deniedDomains": []}, "filesystem": {"allowWrite": ["."], "denyWrite": [], "denyRead": []}}' > settings.json
+          srt --settings settings.json -- python3 -c "print('srt runs programs here')"
+
+      - name: Install the project
+        run: uv sync --locked
+
+      # With LOCI_TEST_SRT=required, the srt tests fail rather than skip if srt cannot run.
+      - name: Test with every run inside srt
+        run: uv run pytest -rs
+
   app:
     name: web app (Node 22)
     runs-on: ubuntu-latest

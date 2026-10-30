@@ -10,6 +10,7 @@ folder you can keep, share or put under version control.
 """
 
 import argparse
+import os
 import platform
 import socket
 import sys
@@ -23,6 +24,7 @@ import uvicorn
 import loci
 from loci import demo
 from loci.errors import LociError
+from loci.sandbox import MODE_ENV, os_sandbox, srt_trial
 from loci.web.app import DEFAULT_PORT, create_app, default_dist
 from loci.web.providers import PROVIDERS, configured, key_name, key_source, load_settings
 from loci.workspace import Workspace
@@ -104,6 +106,22 @@ def doctor() -> bool:
     line((default_dist() / "index.html").exists(), f"web app: {default_dist()}")
     line(True, f"GDAL {rasterio.__gdal_version__}, PROJ {proj_version_str}")
     line(_claude_code() is not None, f"Claude Code: {_claude_code() or 'not found'}")
+    runtime, windows = os_sandbox(), sys.platform == "win32"
+    broken = srt_trial(runtime) if runtime else None
+    if os.environ.get(MODE_ENV, "").strip().lower() == "off":
+        line(False, "sandbox for scripts: off (LOCI_SANDBOX=off)", essential=False)
+    elif broken:
+        line(
+            False,
+            f"sandbox for scripts: loci's guard; srt cannot run here: {broken}",
+            essential=False,
+        )
+    elif runtime or windows:
+        sandboxed = f"srt at {runtime}, with loci's guard" if runtime else "loci's guard"
+        line(True, f"sandbox for scripts: {sandboxed}")
+    else:
+        line(False, "sandbox for scripts: loci's guard only", essential=False)
+        print("  For the operating system's sandbox: npm install -g @anthropic-ai/sandbox-runtime")
     settings = load_settings()
     print(f"  settings: {settings.path.parent if settings.path else 'unknown'}")
     for provider in PROVIDERS:

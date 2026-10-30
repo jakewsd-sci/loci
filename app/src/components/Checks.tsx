@@ -1,5 +1,5 @@
 import { Icon } from "../icons";
-import type { CheckResult, LayerInfo, MapFocus } from "../types";
+import type { CheckResult, LayerInfo, MapFocus, Sandbox } from "../types";
 import { StatusBadge } from "./LayersPanel";
 
 const COMPARE = new Set(["crs_consistent", "extents_overlap", "resolution_consistent"]);
@@ -53,5 +53,34 @@ export function CheckList({
         );
       })}
     </ul>
+  );
+}
+
+const SANDBOXES: Record<Sandbox, { label: string; title: string; status: string }> = {
+  os: {
+    label: "Sandboxed",
+    title: "Ran in the operating system's sandbox and loci's guard: it could write only in its run folder and reach only its inputs.",
+    status: "pass",
+  },
+  guard: {
+    label: "Guarded",
+    title: "Ran with loci's guard: it could write only in its run folder, start no programs and reach only its inputs. Install srt for the operating system's sandbox too.",
+    status: "pass",
+  },
+  off: {
+    label: "Not sandboxed",
+    title: "LOCI_SANDBOX=off: the script could write and reach anywhere.",
+    status: "warn",
+  },
+};
+
+/** How a run's script was kept in, with what that means on hover. */
+export function SandboxBadge({ sandbox }: { sandbox: Sandbox | null | undefined }) {
+  if (!sandbox) return null;
+  const { label, title, status } = SANDBOXES[sandbox];
+  return (
+    <span className={`badge ${status}`} title={title}>
+      {label}
+    </span>
   );
 }

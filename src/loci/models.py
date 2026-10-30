@@ -345,6 +345,7 @@ class RunResult(_Model):
     stderr: str
     outputs: list[RunOutput] = Field(default_factory=list)
     input_checks: ValidationReport | None = None
+    sandbox: Literal["os", "guard", "off"] | None = None  # how the script was kept in (D-052)
     warnings: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 

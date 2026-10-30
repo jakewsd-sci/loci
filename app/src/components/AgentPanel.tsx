@@ -10,9 +10,10 @@ import type {
   Proposal,
   ProviderInfo,
   Review,
+  Sandbox,
   ValidationReport,
 } from "../types";
-import { focusFor } from "./Checks";
+import { focusFor, SandboxBadge } from "./Checks";
 import { StatusBadge } from "./LayersPanel";
 
 interface ReviewState {
@@ -83,11 +84,15 @@ const today = () => new Date().toISOString().slice(0, 10);
 const thousands = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 const round = (v: number) => Number(v.toFixed(5));
 
-/** The run's comparison of its inputs, from the tool result's JSON, if it made one. */
-function inputChecks(name: string, result: string): ValidationReport | null {
+/** What a run reported about its inputs and its sandbox, from the tool result's JSON. */
+function runReport(
+  name: string,
+  result: string,
+): { checks: ValidationReport | null; sandbox: Sandbox | null } | null {
   if (name !== "run") return null;
   try {
-    return (JSON.parse(result) as { input_checks?: ValidationReport }).input_checks ?? null;
+    const parsed = JSON.parse(result) as { input_checks?: ValidationReport; sandbox?: Sandbox };
+    return { checks: parsed.input_checks ?? null, sandbox: parsed.sandbox ?? null };
   } catch {
     return null;
   }
@@ -466,18 +471,20 @@ export function AgentPanel({
                   </div>
                   {item.review && reviewCard(item.review)}
                   {(() => {
-                    const report = item.state === "ok" ? inputChecks(item.name, item.result) : null;
-                    if (!report) return null;
-                    const focus = report.checks.map((c) => focusFor(c, byRef)).find((f) => f !== null);
+                    const ran = item.state === "ok" ? runReport(item.name, item.result) : null;
+                    if (!ran || (!ran.checks && !ran.sandbox)) return null;
+                    const report = ran.checks;
+                    const focus = report?.checks.map((c) => focusFor(c, byRef)).find((f) => f !== null);
                     return (
                       <div className="inputs-checked">
-                        <span>Inputs checked together</span>
-                        <StatusBadge status={report.status} />
+                        {report && <span>Inputs checked together</span>}
+                        {report && <StatusBadge status={report.status} />}
                         {focus && (
                           <button type="button" className="ghost show" onClick={() => onFocus(focus)}>
                             <Icon name="target" size={13} /> Show on map
                           </button>
                         )}
+                        <SandboxBadge sandbox={ran.sandbox} />
                       </div>
                     );
                   })()}

@@ -61,3 +61,39 @@ def test_doctor_reports_the_app_gdal_claude_code_and_each_provider(
     assert "[ok] web app" in report and "GDAL" in report and "Claude Code" in report
     assert "[--] OpenAI: not set up" in report  # optional; the map works without it
     assert "Claude: set up" in report
+
+
+@pytest.mark.parametrize(
+    ("runtime", "broken", "system", "mode", "expected"),
+    [
+        ("/usr/bin/srt", None, "linux", "", "[ok] sandbox for scripts: srt at /usr/bin/srt"),
+        (None, None, "win32", "", "[ok] sandbox for scripts: loci's guard"),  # all Windows has
+        (None, None, "darwin", "", "[--] sandbox for scripts: loci's guard only"),
+        ("/usr/bin/srt", None, "linux", "off", "[--] sandbox for scripts: off (LOCI_SANDBOX=off)"),
+        (
+            "/usr/bin/srt",
+            "EPERM",
+            "linux",
+            "",
+            "[--] sandbox for scripts: loci's guard; srt cannot",
+        ),
+    ],
+)
+def test_doctor_says_how_scripts_are_sandboxed(
+    runtime: str | None,
+    broken: str | None,
+    system: str,
+    mode: str,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(cli, "os_sandbox", lambda: runtime)
+    monkeypatch.setattr(cli, "srt_trial", lambda _: broken)
+    monkeypatch.setattr(cli, "_claude_code", lambda: None)  # shutil.which goes by the system too
+    monkeypatch.setattr(cli.sys, "platform", system)
+    monkeypatch.setenv("LOCI_SANDBOX", mode)
+
+    cli.doctor()
+
+    assert expected in capsys.readouterr().out

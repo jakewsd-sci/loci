@@ -55,7 +55,8 @@ loci runs geospatial analysis that a scientist can trust and trace.
   them; it gives physical values (scale and offset applied, nodata as NaN). Save results with
   loci.script.save(obj, "name.tif"); they are registered and validated automatically. Inputs
   are first checked against each other (input_checks): say how the script deals with any
-  mismatch, such as reprojecting one input explicitly.
+  mismatch, such as reprojecting one input explicitly. Scripts run sandboxed: they write only
+  in their run folder, start no programs, and reach the network only for their inputs.
 - lineage traces a data_ref, or a file written by run, back to its original sources.
 """
 
