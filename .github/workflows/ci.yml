@@ -78,14 +78,25 @@ jobs:
       - name: Install the sandbox runtime
         run: npm install -g @anthropic-ai/sandbox-runtime@0.0.81
 
-      # On Linux srt uses bubblewrap, socat and ripgrep. Ubuntu 24.04 keeps unprivileged user
-      # namespaces, which bubblewrap needs, from programs without an AppArmor profile.
+      # On Linux srt uses bubblewrap, socat and ripgrep. Ubuntu keeps capabilities from the user
+      # namespaces of programs without an AppArmor profile, and its profile for bubblewrap keeps
+      # them from namespaces made inside it, which srt's seccomp helper needs.
       - name: Install what srt needs on Linux
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          for profile in $(grep -l -s -E "^ *profile [^ ]*bwrap" /etc/apparmor.d/* || true); do
+            echo "Unloading the AppArmor profile in $profile"
+            sudo apparmor_parser -R "$profile" || true
+          done
+
+      - name: Check that srt runs a program here
+        run: |
+          cd "$(mktemp -d)"
+          echo '{"network": {"allowedDomains": [], "deniedDomains": []}, "filesystem": {"allowWrite": ["."], "denyWrite": [], "denyRead": []}}' > settings.json
+          srt --settings settings.json -- python3 -c "print('srt runs programs here')"
 
       - name: Install the project
         run: uv sync --locked

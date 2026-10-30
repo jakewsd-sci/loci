@@ -5,7 +5,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,10 +35,8 @@ def _in_srt(folder: Path, code: str, env: Mapping[str, str]) -> subprocess.Compl
 
 def _srt_works() -> bool:
     """Whether Anthropic's sandbox runtime is installed and can run a program here."""
-    if sandbox.os_sandbox() is None:
-        return False
-    with tempfile.TemporaryDirectory() as folder:
-        return _in_srt(Path(folder), "pass", {}).returncode == 0
+    runtime = sandbox.os_sandbox()
+    return runtime is not None and sandbox.srt_trial(runtime) is None
 
 
 @pytest.fixture
@@ -177,6 +174,7 @@ def test_srt_wraps_the_guard_where_it_is_installed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(sandbox, "os_sandbox", lambda: "/usr/local/bin/srt")
+    monkeypatch.setattr(sandbox, "srt_trial", lambda _: None)
     elsewhere = {"LOCI_CONFIG": str(tmp_path / "mine" / "config.toml")}
 
     planned = sandbox.plan("script.py", tmp_path, ["https://cogs.example/b04.tif"], env=elsewhere)
@@ -195,6 +193,9 @@ def test_srt_wraps_the_guard_where_it_is_installed(
     assert guard_only.mode == "guard"
     intranet = sandbox.plan("script.py", tmp_path, ["http://fileserver/dem.tif"], env={})
     assert intranet.mode == "guard" and "cannot allow fileserver" in intranet.note
+    monkeypatch.setattr(sandbox, "srt_trial", lambda _: "apply-seccomp: Permission denied")
+    stopped = sandbox.plan("script.py", tmp_path, [], env={})  # as on some Ubuntu systems
+    assert stopped.mode == "guard" and "cannot run here (apply-seccomp" in stopped.note
     with pytest.raises(LociError, match="not one of auto, guard or off"):
         sandbox.plan("script.py", tmp_path, [], env={sandbox.MODE_ENV: "loose"})
 
@@ -260,7 +261,7 @@ def test_a_script_runs_inside_srt_where_it_works(
     ok = run(ws, code="from loci import script\nscript.save({'answer': 42}, 'answer.json')\n")
     stray = run(ws, code=f"open(r'{tmp_path / 'stray.txt'}', 'w').write('x')\n")
 
-    assert (ok.status, ok.sandbox) == ("ok", "os"), ok.stderr
+    assert (ok.status, ok.sandbox) == ("ok", "os"), f"{ok.notes[-1]} {ok.stderr}"
     assert [o.file for o in ok.outputs] == ["answer.json"]
     assert stray.status == "error" and not (tmp_path / "stray.txt").exists()
 

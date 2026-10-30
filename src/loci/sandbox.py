@@ -14,10 +14,13 @@ LOCI_SANDBOX picks: "auto" (the default: os where srt is installed, else guard),
 credentials their readers use (see reach).
 """
 
+import functools
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -105,6 +108,8 @@ def plan(
     runtime = os_sandbox() if choice == "auto" else None
     if runtime is None:
         return Plan("guard", command, guarded)
+    if broken := srt_trial(runtime):
+        return Plan("guard", command, guarded, f"it is installed but cannot run here ({broken})")
     if bare := [h for h in needs.hosts if "." not in h and h != "localhost" and ":" not in h]:
         # srt allows domains only: a host on the local network, such as "fileserver", is not one.
         names = ", ".join(bare)
@@ -134,6 +139,33 @@ def os_sandbox() -> str | None:
     if sys.platform == "win32":
         return None
     return shutil.which("srt")
+
+
+@functools.cache
+def srt_trial(runtime: str) -> str | None:
+    """Why srt cannot run a program on this computer, or None when it can. Tried once per
+    process: srt installs on systems whose kernel or AppArmor settings stop it working, such as
+    Ubuntu's profile for bubblewrap, and there the guard alone is better than no run at all."""
+    with tempfile.TemporaryDirectory() as folder:
+        settings = Path(folder) / SETTINGS_FILE
+        settings.write_text(json.dumps(srt_settings(Path(folder), Reach(), {})), encoding="utf-8")
+        trial = [runtime, "--settings", str(settings), "--", sys.executable, "-c", "pass"]
+        try:
+            done = subprocess.run(
+                trial,
+                cwd=folder,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return str(e)
+    if done.returncode == 0:
+        return None
+    return (done.stderr.strip().splitlines() or [f"exit code {done.returncode}"])[-1]
 
 
 def srt_settings(run_dir: Path, needs: Reach, env: Mapping[str, str]) -> dict[str, object]:

@@ -24,7 +24,7 @@ import uvicorn
 import loci
 from loci import demo
 from loci.errors import LociError
-from loci.sandbox import MODE_ENV, os_sandbox
+from loci.sandbox import MODE_ENV, os_sandbox, srt_trial
 from loci.web.app import DEFAULT_PORT, create_app, default_dist
 from loci.web.providers import PROVIDERS, configured, key_name, key_source, load_settings
 from loci.workspace import Workspace
@@ -107,8 +107,15 @@ def doctor() -> bool:
     line(True, f"GDAL {rasterio.__gdal_version__}, PROJ {proj_version_str}")
     line(_claude_code() is not None, f"Claude Code: {_claude_code() or 'not found'}")
     runtime, windows = os_sandbox(), sys.platform == "win32"
+    broken = srt_trial(runtime) if runtime else None
     if os.environ.get(MODE_ENV, "").strip().lower() == "off":
         line(False, "sandbox for scripts: off (LOCI_SANDBOX=off)", essential=False)
+    elif broken:
+        line(
+            False,
+            f"sandbox for scripts: loci's guard; srt cannot run here: {broken}",
+            essential=False,
+        )
     elif runtime or windows:
         sandboxed = f"srt at {runtime}, with loci's guard" if runtime else "loci's guard"
         line(True, f"sandbox for scripts: {sandboxed}")

@@ -1183,6 +1183,10 @@ administrator. It is Node software, so it is used when installed, not bundled.
     in the temporary folder it is given, and a run folder can be too deep a path for one.
   - srt allows domains only, so a run with an input on a host without one (an intranet
     "fileserver") runs with the guard alone, and its note says why.
+  - srt installs where it cannot run: on Ubuntu 26.04, for one, AppArmor's profile for
+    bubblewrap keeps capabilities from the user namespace srt's seccomp helper makes. loci
+    tries srt once per process and, if it fails, runs with the guard alone and says why, in
+    the run's note and in `loci doctor`. CI unloads that profile so the srt tests can run.
 - **One switch.** `LOCI_SANDBOX` is `auto` (the default: srt where installed, else the guard),
   `guard` or `off`. `RunResult.sandbox` says which was used and a note explains it. The app
   shows it as a badge on each run, and `loci doctor` reports it. The MCP instructions and the
