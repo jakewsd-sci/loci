@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import { Icon } from "../icons";
 import type { LayerInfo, MapFocus, Proposal, RunResult, RunScript, ScriptFile } from "../types";
-import { CheckList } from "./Checks";
+import { CheckList, SandboxBadge } from "./Checks";
 import { StatusBadge } from "./LayersPanel";
 
 // Monaco from the installed package, not a CDN, so the app works offline.
@@ -389,6 +389,7 @@ export function CodePanel({
             <span className="ref">
               {result.run_id} · {result.seconds.toFixed(1)} s
             </span>
+            <SandboxBadge sandbox={result.sandbox} />
           </div>
           {result.outputs.map((o) => (
             <div key={o.file} className="output-row">
