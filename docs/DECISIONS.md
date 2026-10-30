@@ -1137,3 +1137,72 @@ HTTPS also needs aiohttp, which fsspec (already installed) uses as its HTTP clie
 - obstore for cloud stores: smaller, but fsspec is already a dependency and is the ecosystem's
   common path.
 
+
+## D-052 Scripts run sandboxed: loci's guard everywhere, the OS sandbox where installed (Phase 2, 2026-10-30)
+
+**Context.** `run` executes Python that an agent wrote, on the scientist's own computer, with
+their files, keys and network in reach. Until now a script could write anywhere, start any
+program, and send anything anywhere. A mistaken path could overwrite field data. A confused or
+manipulated agent could read loci's API keys or send data away. The user wants to demo loci on
+Windows, and chose a guard everywhere plus the operating system's sandbox where available.
+Anthropic's sandbox runtime (`srt`, an npm package) enforces file and network limits with
+bubblewrap on Linux and Seatbelt on macOS; on Windows it is an alpha that needs an
+administrator. It is Node software, so it is used when installed, not bundled.
+
+**Choice.**
+- **What a script may do.** It writes only in its run folder: temporary files and matplotlib's
+  cache go there too, with matplotlib's font list copied in so that it is not rebuilt each run
+  (slow on Windows). It starts no programs. It reaches the network only where its declared
+  inputs are:
+  - the hosts of http(s) URLs, including those inside GDAL paths;
+  - for STAC inputs, the hosts of the assets of the bands that were loaded;
+  - for cloud storage, its usual endpoints (`<bucket>.s3.amazonaws.com`, also in `$AWS_REGION`,
+    or `$AWS_S3_ENDPOINT`; `storage.googleapis.com`; the `$AZURE_STORAGE_ACCOUNT` account);
+  - and the computer's proxy, if inputs are remote.
+
+  It cannot read SSH keys, loci's settings and keys files (wherever `$LOCI_CONFIG`,
+  `%APPDATA%` or `$XDG_CONFIG_HOME` put them), or cloud credentials its inputs do not need
+  (`~/.aws` opens to s3 inputs, `~/.netrc` to http ones).
+- **loci's guard (`loci.guard`), everywhere.** The script starts as
+  `python -m loci.guard script.py`, which installs a Python audit hook before the script's first
+  line. Python cannot remove an audit hook. The hook refuses opens for writing outside the run
+  folder, renames, deletes and the like, process starts, name lookups and connections to other
+  hosts, and reads of private files. A refusal is a PermissionError naming what was stopped and
+  why, and an uncaught one comes back as a warning on the run.
+
+  Through a proxy, it checks the host that http.client (under requests and urllib) asks the
+  proxy for; other clients, such as aiohttp, are seen only as far as the proxy. The guard cannot
+  see C libraries (GDAL's own reads and requests) either, so it catches mistakes, not a
+  determined attack.
+- **The OS sandbox, where `srt` is installed** (macOS, Linux, WSL2; not Windows). The guarded
+  command runs inside `srt` with a settings file in the run folder. The settings allow writes
+  only there, allow only the inputs' domains through srt's proxy, which goes on through the
+  computer's proxy, and deny reading the same private paths. The OS holds everything the process
+  does, GDAL included.
+  - Temporary folders are set by the guard inside the sandbox, because srt keeps its own sockets
+    in the temporary folder it is given, and a run folder can be too deep a path for one.
+  - srt allows domains only, so a run with an input on a host without one (an intranet
+    "fileserver") runs with the guard alone, and its note says why.
+- **One switch.** `LOCI_SANDBOX` is `auto` (the default: srt where installed, else the guard),
+  `guard` or `off`. `RunResult.sandbox` says which was used and a note explains it. The app
+  shows it as a badge on each run, and `loci doctor` reports it. The MCP instructions and the
+  app's agent are told the rules, so they write scripts that keep to them.
+- **Tests.** The guard's rules are unit-tested. Real runs check that scripts cannot write or
+  delete outside their folder, start programs, reach other hosts, or read loci's keys, while
+  tempfile, matplotlib and `script.save` still work. Where srt runs, tests check that it holds
+  code the guard cannot see. A CI job installs srt on Linux and macOS and runs the whole suite
+  with every run inside it. Network tests run Sentinel-2 and ERA5 scripts in both modes.
+- `user_settings.py` now holds where loci's settings live, so the sandbox can hide them without
+  `tools/` depending on `web/`.
+
+`RunResult.sandbox` is an addition to the stable interface.
+
+**Alternatives.**
+- **Containers (Docker, Podman).** Strong isolation, but a heavy install for scientists on
+  Windows, and the geospatial stack would have to be duplicated inside an image.
+- **Pyodide or WebAssembly.** No GDAL with network access, and no dask.
+- **A restricted Python (RestrictedPython, seccomp-only).** It breaks ordinary scientific code,
+  or does not exist on Windows and macOS.
+- **The guard alone.** It works everywhere, but cannot hold GDAL; the OS sandbox closes that gap
+  where it can be installed.
+- **Bundling srt.** It needs Node, and on Linux bubblewrap and socat from the system.
