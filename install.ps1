@@ -15,19 +15,27 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 }
 
-$release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest"
-$wheel = $release.assets | Where-Object { $_.name -like "*.whl" } | Select-Object -First 1
-$pins = $release.assets | Where-Object { $_.name -eq "constraints.txt" } | Select-Object -First 1
-if (-not $wheel -or -not $pins) { throw "The latest loci release, $($release.tag_name), is incomplete." }
+# The latest release, from where GitHub sends its address: unlike GitHub's API, this has no small
+# limit for computers that share an address, as on a campus or office network.
+$latest = [System.Net.WebRequest]::Create("https://github.com/$repo/releases/latest")
+$latest.Method = "HEAD"
+$response = $latest.GetResponse()
+$tag = $response.ResponseUri.Segments[-1]
+$response.Close()
+if ($tag -notlike "v*") { throw "loci has no release yet." }
+$download = "https://github.com/$repo/releases/download/$tag"
 
 $constraints = Join-Path ([System.IO.Path]::GetTempPath()) "loci-constraints.txt"
-Invoke-WebRequest $pins.browser_download_url -OutFile $constraints -UseBasicParsing
-Write-Host "Installing loci $($release.tag_name)..."
-uv tool install --force --python 3.12 --constraints $constraints $wheel.browser_download_url
+Invoke-WebRequest "$download/constraints.txt" -OutFile $constraints -UseBasicParsing
+Write-Host "Installing loci $tag..."
+uv tool install --force --python 3.12 --constraints $constraints "$download/loci-$($tag.Substring(1))-py3-none-any.whl"
 if ($LASTEXITCODE -ne 0) { throw "uv could not install loci." }
+# uv reports on stderr, which Windows PowerShell turns into a stopping error when redirected.
+$ErrorActionPreference = "Continue"
 uv tool update-shell *> $null
+$ErrorActionPreference = "Stop"
 
 Write-Host ""
-Write-Host "loci $($release.tag_name) is installed. Open a new terminal, then try:"
+Write-Host "loci $tag is installed. Open a new terminal, then try:"
 Write-Host "  loci demo                      a demo project with known answers"
 Write-Host "  loci open C:\path\to\your\data  your own data"
