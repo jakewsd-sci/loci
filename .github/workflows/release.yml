@@ -113,9 +113,12 @@ jobs:
           gh release create "$RELEASE" dist/*.whl dist/constraints.txt install.ps1 install.sh \
             --target "$GITHUB_SHA" --title "loci $RELEASE" --notes-file docs/RELEASE_NOTES.md
 
+  # After publishing, and on pull requests, where it tries the scripts as changed against the
+  # latest release.
   installed:
     name: install script (${{ matrix.os }})
     needs: publish
+    if: always() && (needs.publish.result == 'success' || github.event_name == 'pull_request')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
